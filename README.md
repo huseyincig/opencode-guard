@@ -28,44 +28,37 @@ Traditional agent detectors often rely on external platform-specific binaries (R
 
 You do **not** need an npm registry release to install and use this plugin right now. Choose any of the methods below:
 
-### Method 1: Directly from GitHub (Recommended)
+### Method 1: Local Directory / Vendor (Recommended)
 
-Add the GitHub repository directly to your OpenCode configuration (`~/.config/opencode/opencode.json` or project-local `opencode.json`):
+Clone or symlink the repository into your OpenCode vendor or plugins directory:
+
+```bash
+git clone https://github.com/huseyincig/opencode-guard.git ~/.config/opencode/vendor/opencode-guard
+```
+
+Then add the absolute `file:///` path to your OpenCode configuration (`~/.config/opencode/opencode.json`):
 
 ```json
 {
   "plugin": [
-    "github:huseyincig/opencode-guard"
+    "file:///root/.config/opencode/vendor/opencode-guard"
   ]
 }
 ```
 
-Or install it via `npm` / `bun`:
+Because the pre-compiled `dist/` files are tracked in git, it is ready to run immediately with no build step required.
 
-```bash
-npm install github:huseyincig/opencode-guard
-```
+### Method 2: NPM (Once Published)
 
-### Method 2: Local Directory / Development
-
-If you have cloned or developed the plugin locally on your machine:
+Once published to npm or an internal registry:
 
 ```json
 {
   "plugin": [
-    "file:/opt/nc-workspace/opencode-guard"
+    "opencode-guard@latest"
   ]
 }
 ```
-
-### Method 3: Git Clone
-
-```bash
-git clone https://github.com/huseyincig/opencode-guard.git
-```
-Because the pre-compiled `dist/` files are tracked in git, it is ready to run immediately with no `npm run build` step required.
-
-*(Note: Once published to the npm registry in the future, standard `"opencode-guard"` package resolution will also be supported).*
 
 ---
 
