@@ -1,6 +1,6 @@
 {
   "name": "opencode-guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Universal quality and safety guard plugin for OpenCode AI agents (Dual-Mode: OpenCode v1 & v2)",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,7 +18,9 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "index.js",
+    "server.js"
   ],
   "scripts": {
     "build": "tsc",
@@ -31,10 +33,20 @@
     "ai-agent",
     "guard",
     "linter",
-    "code-quality"
+    "code-quality",
+    "safety",
+    "guardrails"
   ],
-  "author": "",
+  "author": "Hüseyin Hadi Çığ",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/huseyincig/opencode-guard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/huseyincig/opencode-guard/issues"
+  },
+  "homepage": "https://github.com/huseyincig/opencode-guard#readme",
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0"

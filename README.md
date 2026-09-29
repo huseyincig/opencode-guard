@@ -3,11 +3,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OpenCode: v1 & v2](https://img.shields.io/badge/OpenCode-v1%20%26%20v2%20Compatible-blue.svg)](https://github.com/huseyincig/opencode-guard)
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
-[![Tests: 100% Pass](https://img.shields.io/badge/Tests-20%2F20%20Passing-brightgreen.svg)](tests/)
+[![Tests: 100% Pass](https://img.shields.io/badge/Tests-29%2F29%20Passing-brightgreen.svg)](tests/)
 
 A universal, high-performance quality and safety guard plugin for **OpenCode** AI agents.
 
-Designed to prevent common AI agent bad habits: responsibility evasion, hedging shortcuts, empty stub implementations, lazy code truncation, test skipping, hardcoded secrets, undeclared dependencies, and repetitive error loops.
+Designed to prevent common AI agent bad habits in real time: responsibility evasion, sycophantic apologies, hedging shortcuts, empty stub implementations, lazy code truncation, test skipping, hardcoded secrets, undeclared dependencies, and repetitive error loops.
+
+Works **100% out of the box** using OpenCode's native lifecycle hooks — **no manual markdown files, rules, or system prompt files required**.
 
 ---
 
@@ -16,9 +18,10 @@ Designed to prevent common AI agent bad habits: responsibility evasion, hedging 
 Traditional agent detectors often rely on external platform-specific binaries (Rust, Go, or Python) which introduce compile issues, glibc mismatches, and sluggish child-process invocation. 
 
 **OpenCode Guard** provides:
-- **Zero-Binary, Pure TypeScript:** Native in-memory execution (~0.5ms per inspection) with zero runtime dependencies.
+- **Native Lifecycle Integration:** Hooks directly into OpenCode's `session.idle` event — zero manual `.md` configuration, zero boilerplate.
+- **Zero-Binary, Pure TypeScript:** Native in-memory execution (~0.5ms per inspection) with zero external runtime dependencies.
 - **Dual-Mode Host Support:** Works seamlessly with both **OpenCode 1.x** (via `server` hook) and **OpenCode 2.x** (via `setup` and `event.subscribe`).
-- **Pre-Built Distribution:** Pre-compiled `dist/` is included in the repository—no build toolchain (`tsc`) required on target systems.
+- **Pre-Built Distribution:** Pre-compiled `dist/` is included in the package and git repository — no build toolchain (`tsc`) required on target systems.
 - **Zero False-Positives:** Localized exception boundaries (e.g., `TemporaryDirectory` won't mask subsequent hedging), AST/patch header extraction, and template variable filtering.
 - **Anti-Loop Architecture:** Automatically detects synthetic remediation prompts to ensure the agent never gets trapped in an infinite feedback loop.
 
@@ -26,36 +29,38 @@ Traditional agent detectors often rely on external platform-specific binaries (R
 
 ## 📦 Installation
 
-You do **not** need an npm registry release to install and use this plugin right now. Choose any of the methods below:
+### Method 1: NPM Package (Recommended)
 
-### Method 1: Local Directory / Vendor (Recommended)
-
-Clone or symlink the repository into your OpenCode vendor or plugins directory:
+Install the plugin directly via OpenCode CLI:
 
 ```bash
-git clone https://github.com/huseyincig/opencode-guard.git ~/.config/opencode/vendor/opencode-guard
+opencode plugin opencode-guard
 ```
 
-Then add the absolute `file:///` path to your OpenCode configuration (`~/.config/opencode/opencode.json`):
-
-```json
-{
-  "plugin": [
-    "file:///root/.config/opencode/vendor/opencode-guard"
-  ]
-}
-```
-
-Because the pre-compiled `dist/` files are tracked in git, it is ready to run immediately with no build step required.
-
-### Method 2: NPM (Once Published)
-
-Once published to npm or an internal registry:
+Or add it to your OpenCode configuration (`~/.config/opencode/opencode.json` or project-local `opencode.json`):
 
 ```json
 {
   "plugin": [
     "opencode-guard@latest"
+  ]
+}
+```
+
+### Method 2: Local Directory / Development
+
+If developing or testing locally:
+
+```bash
+git clone https://github.com/huseyincig/opencode-guard.git ~/.config/opencode/vendor/opencode-guard
+```
+
+Add the absolute `file:///` path to your OpenCode configuration (`~/.config/opencode/opencode.json`):
+
+```json
+{
+  "plugin": [
+    "file:///root/.config/opencode/vendor/opencode-guard"
   ]
 }
 ```
@@ -82,15 +87,16 @@ Once published to npm or an internal registry:
 
 OpenCode Guard works out of the box with zero configuration (all rules enabled with `error` severity).
 
-To customize behavior, create an `opencode-guard.json` file in your project root or `~/.config/opencode/opencode-guard.json`:
+To customize rule severities or add phrase exceptions, create `opencode-guard.json` in your project root or `~/.config/opencode/opencode-guard.json`:
 
 ```json
 {
   "enabled": true,
   "rules": {
     "discipline/no-evasion": "error",
+    "discipline/no-apology": "error",
     "quality/no-shortcuts": {
-      "severity": "error",
+      "severity": "warn",
       "customPhrases": ["works on my machine", "not my job"],
       "exceptions": ["temporarydirectory", "tempdir"]
     },
@@ -105,8 +111,8 @@ To customize behavior, create an `opencode-guard.json` file in your project root
 ```
 
 ### Severity Levels:
-- `"error"`: **Blocks** the agent turn and sends a synthetic remediation prompt instructing the agent to fix the issue.
-- `"warn"`: Records the finding in rule results but **does not block** the agent from completing its turn.
+- `"error"`: **Blocks** the agent turn and sends a synthetic remediation prompt instructing the agent to rectify the issue.
+- `"warn"`: Records the finding in inspection logs but **does not block** the agent from completing its turn.
 - `"off"`: Completely disables the rule.
 
 ---
@@ -133,22 +139,18 @@ flowchart TD
 
 ## 🧪 Testing & Verification
 
-The repository comes with a comprehensive test suite covering unit behaviors and end-to-end sandbox simulations.
+The repository comes with a comprehensive test suite covering unit behaviors and end-to-end sandbox simulations:
 
 ```bash
-# Run 20/20 unit tests (~55ms)
+# Run 29/29 unit tests (~65ms)
 npm test
 
-# Run isolated sandbox end-to-end suite (10 scenarios)
-node sandbox/comprehensive-test.mjs
+# Typecheck TypeScript sources
+npm run typecheck
 
-# Run sandbox smoke test
-node sandbox/smoke-test.mjs
+# Build distribution files
+npm run build
 ```
-
-### Test Suite Highlights:
-- **20 Unit Tests:** Validates every rule pattern, localized exception boundaries, object error serialization, and severity handling.
-- **10 E2E Scenarios:** Verifies blocking of all 8 violation types, plus 2 clean passes verifying zero false-positives and loop continuation.
 
 ---
 
@@ -160,13 +162,13 @@ opencode-guard/
 ├── src/
 │   ├── index.ts         # Dual-Mode entry point (OpenCode v1 server & v2 setup)
 │   ├── engine.ts        # GuardEngine inspection orchestrator & config loader
+│   ├── prose.ts         # Prose normalization & blockquote/citation stripper
 │   ├── types.ts         # TypeScript interfaces & definitions
-│   └── rules/           # The 8 modular rule implementations
-├── sandbox/             # Isolated sandbox environment for testing
-│   ├── comprehensive-test.mjs
-│   └── smoke-test.mjs
+│   └── rules/           # The 9 modular rule implementations
 ├── tests/
-│   └── guard.test.mjs   # Comprehensive unit test suite
+│   └── guard.test.mjs   # Comprehensive 29-case unit test suite
+├── index.js             # Root module export for universal module loaders
+├── server.js            # Root server export for OpenCode plugin discovery
 ├── package.json
 ├── tsconfig.json
 ├── LICENSE              # MIT License
