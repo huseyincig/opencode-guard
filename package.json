@@ -42,12 +42,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/huseyincig/opencode-guard.git"
+    "url": "git+https://github.com/huseyincig/opencode-guardian.git"
   },
   "bugs": {
-    "url": "https://github.com/huseyincig/opencode-guard/issues"
+    "url": "https://github.com/huseyincig/opencode-guardian/issues"
   },
-  "homepage": "https://github.com/huseyincig/opencode-guard#readme",
+  "homepage": "https://github.com/huseyincig/opencode-guardian#readme",
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0"

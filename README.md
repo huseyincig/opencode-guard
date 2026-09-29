@@ -1,7 +1,7 @@
 # opencode-guardian 🛡️
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![OpenCode: v1 & v2](https://img.shields.io/badge/OpenCode-v1%20%26%20v2%20Compatible-blue.svg)](https://github.com/huseyincig/opencode-guard)
+[![OpenCode: v1 & v2](https://img.shields.io/badge/OpenCode-v1%20%26%20v2%20Compatible-blue.svg)](https://github.com/huseyincig/opencode-guardian)
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
 [![Tests: 100% Pass](https://img.shields.io/badge/Tests-32%2F32%20Passing-brightgreen.svg)](tests/)
 
@@ -52,7 +52,7 @@ Or add it to your OpenCode configuration (`~/.config/opencode/opencode.json` or 
 If developing or testing locally:
 
 ```bash
-git clone https://github.com/huseyincig/opencode-guard.git ~/.config/opencode/vendor/opencode-guardian
+git clone https://github.com/huseyincig/opencode-guardian.git ~/.config/opencode/vendor/opencode-guardian
 ```
 
 Add the absolute `file:///` path to your OpenCode configuration (`~/.config/opencode/opencode.json`):
