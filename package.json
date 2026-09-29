@@ -1,7 +1,7 @@
 {
-  "name": "opencode-guard",
+  "name": "opencode-guardian",
   "version": "0.1.1",
-  "description": "Universal quality and safety guard plugin for OpenCode AI agents (Dual-Mode: OpenCode v1 & v2)",
+  "description": "Universal quality and safety guardian plugin for OpenCode AI agents (Dual-Mode: OpenCode v1 & v2)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -30,7 +30,8 @@
   "keywords": [
     "opencode",
     "opencode-plugin",
-    "ai-agent",
+    "opencode-guardian",
+    "guardian",
     "guard",
     "linter",
     "code-quality",

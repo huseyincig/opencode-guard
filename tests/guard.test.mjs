@@ -301,7 +301,7 @@ test("security/no-secrets rule ignores .env.example files", () => {
 test("manifest/no-ghost-deps rule detects unlisted imports", () => {
   const context = {
     sessionID: "test-sess",
-    directory: "/opt/nc-workspace/opencode-guard",
+    directory: process.cwd(),
     messages: [],
     ruleConfig: {},
     currentTurn: [
@@ -892,4 +892,46 @@ test("manifest/no-ghost-deps resolves RELATIVE target paths against the session 
 
   assert.equal(res.decision, "pass");
   fs.rmSync(pkg, { recursive: true, force: true });
+});
+
+test("plugin exports OpencodeGuardian with id 'opencode-guardian' and backward-compatible OpencodeGuard alias", async () => {
+  const pluginMod = await import("../dist/index.js");
+  assert.equal(pluginMod.OpencodeGuardian.id, "opencode-guardian");
+  assert.equal(typeof pluginMod.OpencodeGuardian.server, "function");
+  assert.equal(typeof pluginMod.OpencodeGuardian.setup, "function");
+  assert.equal(pluginMod.default, pluginMod.OpencodeGuardian);
+  assert.equal(pluginMod.OpencodeGuard, pluginMod.OpencodeGuardian);
+});
+
+test("root index.js and server.js re-export plugin cleanly", async () => {
+  const rootIndex = await import("../index.js");
+  const rootServer = await import("../server.js");
+  assert.equal(rootIndex.OpencodeGuardian.id, "opencode-guardian");
+  assert.equal(rootIndex.default.id, "opencode-guardian");
+  assert.equal(rootServer.OpencodeGuardian.id, "opencode-guardian");
+  assert.equal(rootServer.default.id, "opencode-guardian");
+});
+
+test("loadConfig supports opencode-guardian.json and falls back to opencode-guard.json", async () => {
+  const { loadConfig } = await import("../dist/engine.js");
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-cfg-"));
+
+  // 1. When opencode-guardian.json exists
+  fs.writeFileSync(
+    path.join(tmpDir, "opencode-guardian.json"),
+    JSON.stringify({ enabled: true, rules: { "testing/no-cheat": "off" } })
+  );
+  let cfg = loadConfig(tmpDir);
+  assert.equal(cfg.rules["testing/no-cheat"], "off");
+
+  // 2. When only opencode-guard.json exists (backward compat)
+  fs.unlinkSync(path.join(tmpDir, "opencode-guardian.json"));
+  fs.writeFileSync(
+    path.join(tmpDir, "opencode-guard.json"),
+    JSON.stringify({ enabled: true, rules: { "testing/no-cheat": "warn" } })
+  );
+  cfg = loadConfig(tmpDir);
+  assert.equal(cfg.rules["testing/no-cheat"], "warn");
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
 });

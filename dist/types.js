@@ -1,4 +1,4 @@
 /**
- * opencode-guard: Core Type Definitions
+ * opencode-guardian: Core Type Definitions
  */
 export {};

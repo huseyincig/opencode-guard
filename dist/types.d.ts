@@ -1,5 +1,5 @@
 /**
- * opencode-guard: Core Type Definitions
+ * opencode-guardian: Core Type Definitions
  */
 export type Severity = "error" | "warn" | "off";
 export interface GuardRuleConfig {

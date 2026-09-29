@@ -33,6 +33,9 @@ export const BUILTIN_RULES: Record<string, GuardRule> = {
 
 export function loadConfig(directory?: string): GuardConfig {
   const candidatePaths = [
+    directory ? path.resolve(directory, "opencode-guardian.json") : null,
+    directory ? path.resolve(directory, ".opencode/opencode-guardian.json") : null,
+    path.resolve(os.homedir(), ".config/opencode/opencode-guardian.json"),
     directory ? path.resolve(directory, "opencode-guard.json") : null,
     directory ? path.resolve(directory, ".opencode/opencode-guard.json") : null,
     path.resolve(os.homedir(), ".config/opencode/opencode-guard.json"),

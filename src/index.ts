@@ -32,15 +32,15 @@ async function handleSessionIdle(
       await sendPrompt(result.combinedRemediationPrompt);
     }
   } catch (error) {
-    console.error("[opencode-guard] Inspection error:", error);
+    console.error("[opencode-guardian] Inspection error:", error);
   }
 }
 
 /**
  * OpenCode Dual-Mode Plugin Definition
  */
-export const OpencodeGuard = {
-  id: "opencode-guard",
+export const OpencodeGuardian = {
+  id: "opencode-guardian",
 
   /**
    * OpenCode v1 Host Handler
@@ -116,4 +116,5 @@ export const OpencodeGuard = {
   },
 };
 
-export default OpencodeGuard;
+export const OpencodeGuard = OpencodeGuardian;
+export default OpencodeGuardian;

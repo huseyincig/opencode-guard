@@ -13,6 +13,24 @@ export * from "./prose.js";
 /**
  * OpenCode Dual-Mode Plugin Definition
  */
+export declare const OpencodeGuardian: {
+    id: string;
+    /**
+     * OpenCode v1 Host Handler
+     */
+    server: ({ client, directory }: {
+        client: any;
+        directory: string;
+    }) => Promise<{
+        event: ({ event }: {
+            event: any;
+        }) => Promise<void>;
+    }>;
+    /**
+     * OpenCode v2 Host Handler
+     */
+    setup: (context: any) => Promise<void>;
+};
 export declare const OpencodeGuard: {
     id: string;
     /**
@@ -31,4 +49,4 @@ export declare const OpencodeGuard: {
      */
     setup: (context: any) => Promise<void>;
 };
-export default OpencodeGuard;
+export default OpencodeGuardian;
