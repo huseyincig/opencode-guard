@@ -25,7 +25,8 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/*.test.mjs"
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "prepack": "npm run build"
   },
   "keywords": [
     "opencode",
@@ -49,6 +50,8 @@
   },
   "homepage": "https://github.com/huseyincig/opencode-guardian#readme",
   "devDependencies": {
+    "@opencode-ai/plugin": "^1.18.33",
+    "@opencode/plugin": "^2.0.20",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0"
   }

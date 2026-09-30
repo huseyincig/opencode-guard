@@ -1,4 +1,5 @@
 import type { GuardRule, RuleFinding, RuleResult, TurnInspectionContext } from "../types.js";
+import { extractLikelyShellMutation } from "../tool-input.js";
 
 /**
  * Regex patterns that detect lazy file truncation comments like:
@@ -79,6 +80,10 @@ export const noTruncationRule: GuardRule = {
           const patchText = extractAddedLines(input.patchText ?? input.patch);
           if (patchText) {
             checkCode(patchText, "patch added lines");
+          }
+          const shellMutation = extractLikelyShellMutation(input);
+          if (shellMutation) {
+            checkCode(shellMutation, "shell file mutation");
           }
         }
       }

@@ -1,3 +1,4 @@
+import { extractLikelyShellMutation } from "../tool-input.js";
 /**
  * Regex patterns that detect lazy file truncation comments like:
  * "// ... existing code unchanged ..."
@@ -74,6 +75,10 @@ export const noTruncationRule = {
                     const patchText = extractAddedLines(input.patchText ?? input.patch);
                     if (patchText) {
                         checkCode(patchText, "patch added lines");
+                    }
+                    const shellMutation = extractLikelyShellMutation(input);
+                    if (shellMutation) {
+                        checkCode(shellMutation, "shell file mutation");
                     }
                 }
             }

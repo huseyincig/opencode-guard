@@ -935,3 +935,359 @@ test("loadConfig supports opencode-guardian.json and falls back to opencode-guar
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test("GuardEngine honors object severity off", async () => {
+  const engine = new GuardEngine({
+    enabled: true,
+    rules: {
+      "discipline/no-evasion": { severity: "off" },
+      "discipline/no-apology": "off",
+      "quality/no-shortcuts": "off",
+      "integrity/no-stubs": "off",
+      "safety/no-truncation": "off",
+      "testing/no-cheat": "off",
+      "security/no-secrets": "off",
+      "manifest/no-ghost-deps": "off",
+      "runtime/circuit-breaker": "off",
+    },
+  });
+
+  const result = await engine.inspect("severity-off", "/tmp", [
+    { info: { id: "u-off", role: "user" }, parts: [{ type: "text", text: "check" }] },
+    { info: { id: "a-off", role: "assistant" }, parts: [{ type: "text", text: "This is unrelated to this change." }] },
+  ]);
+
+  assert.equal(result.decision, "pass");
+});
+
+test("quality/no-shortcuts ignores empty configured exceptions without hanging", () => {
+  const context = {
+    sessionID: "empty-exception",
+    directory: "/tmp",
+    messages: [],
+    ruleConfig: { exceptions: [""] },
+    currentTurn: [
+      {
+        info: { id: "a-empty", role: "assistant" },
+        parts: [{ type: "text", text: "This temporary fix is good enough for now." }],
+      },
+    ],
+  };
+  assert.equal(noShortcutsRule.inspect(context).decision, "block");
+});
+
+test("security/no-secrets does not bypass real-looking secrets containing test/sample words", () => {
+  const cases = [
+    "const key = 'sk-aaaaaaaaaaaaaaaaatestbbbbbbbbbbbbbbbbbbbbbbbb';",
+    "const db = 'postgres://admin:SuperSecretPassword@db.example.com/testdb';",
+  ];
+
+  for (const content of cases) {
+    const context = {
+      sessionID: "secret-substring",
+      directory: "/tmp",
+      messages: [],
+      ruleConfig: {},
+      currentTurn: [
+        {
+          info: { id: "a-secret-substring", role: "assistant" },
+          parts: [{ type: "tool", state: { input: { path: "src/config.ts", content } } }],
+        },
+      ],
+    };
+    assert.equal(noSecretsRule.inspect(context).decision, "block");
+  }
+});
+
+test("manifest/no-ghost-deps stops at the nearest package boundary", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-monorepo-"));
+  const child = path.join(root, "packages", "child");
+  fs.mkdirSync(path.join(child, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ dependencies: { lodash: "1.0.0" } }));
+  fs.writeFileSync(path.join(child, "package.json"), JSON.stringify({ name: "child", dependencies: {} }));
+  clearDeclaredDepsCache();
+
+  const context = {
+    sessionID: "monorepo",
+    directory: child,
+    messages: [],
+    ruleConfig: {},
+    currentTurn: [
+      {
+        info: { id: "a-monorepo", role: "assistant" },
+        parts: [{ type: "tool", state: { input: { path: path.join(child, "src", "x.js"), content: 'import lodash from "lodash";' } } }],
+      },
+    ],
+  };
+
+  assert.equal(noGhostDepsRule.inspect(context).decision, "block");
+});
+
+test("manifest/no-ghost-deps detects dynamic imports but ignores comments and string examples", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-imports-"));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ dependencies: {} }));
+
+  clearDeclaredDepsCache();
+  const dynamicContext = {
+    sessionID: "dynamic-import",
+    directory: root,
+    messages: [],
+    ruleConfig: {},
+    currentTurn: [
+      {
+        info: { id: "a-dynamic", role: "assistant" },
+        parts: [{ type: "tool", state: { input: { path: path.join(root, "src.js"), content: 'const mod = await import("lodash");' } } }],
+      },
+    ],
+  };
+  assert.equal(noGhostDepsRule.inspect(dynamicContext).decision, "block");
+
+  clearDeclaredDepsCache();
+  const docsContext = {
+    ...dynamicContext,
+    sessionID: "docs-import",
+    currentTurn: [
+      {
+        info: { id: "a-docs", role: "assistant" },
+        parts: [
+          {
+            type: "tool",
+            state: {
+              input: {
+                path: path.join(root, "docs.js"),
+                content: '// docs: import lodash from "lodash";\nconst example = \'require("axios")\';',
+              },
+            },
+          },
+        ],
+      },
+    ],
+  };
+  assert.equal(noGhostDepsRule.inspect(docsContext).decision, "pass");
+});
+
+test("testing/no-cheat recognizes Windows and root-level Python test paths", () => {
+  for (const filePath of ["C:\\repo\\tests\\foo.py", "/repo/test_auth.py"]) {
+    const context = {
+      sessionID: "test-paths",
+      directory: "/tmp",
+      messages: [],
+      ruleConfig: {},
+      currentTurn: [
+        {
+          info: { id: `a-${filePath}`, role: "assistant" },
+          parts: [{ type: "tool", state: { input: { path: filePath, content: '@pytest.mark.skip(reason="broken")' } } }],
+        },
+      ],
+    };
+    assert.equal(noCheatRule.inspect(context).decision, "block");
+  }
+});
+
+test("file-mutation rules inspect shell heredoc writes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-shell-"));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ dependencies: {} }));
+  clearDeclaredDepsCache();
+
+  const command =
+    "cat > src/unsafe.js <<'EOF'\n" +
+    'import lodash from "lodash";\n' +
+    'const key = "sk-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";\n' +
+    'function f(){ throw new NotImplementedError("todo") }\n' +
+    '// TODO: temporary fix\n' +
+    '// ... existing code unchanged ...\n' +
+    'it.skip("x",()=>{});\n' +
+    "EOF";
+
+  const currentTurn = [
+    {
+      info: { id: "a-shell", role: "assistant" },
+      parts: [{ type: "tool", state: { input: { command } } }],
+    },
+  ];
+  const base = {
+    sessionID: "shell-write",
+    directory: root,
+    messages: [],
+    ruleConfig: {},
+    currentTurn,
+  };
+
+  for (const rule of [noShortcutsRule, noStubsRule, noTruncationRule, noCheatRule, noSecretsRule, noGhostDepsRule]) {
+    assert.equal(rule.inspect(base).decision, "block", rule.id);
+  }
+});
+
+test("GuardEngine does not blindly skip the next unrelated idle after a block", async () => {
+  const engine = new GuardEngine();
+  const first = await engine.inspect("no-blind-skip", "/tmp", [
+    { info: { id: "u-1-skip", role: "user" }, parts: [{ type: "text", text: "do it" }] },
+    { info: { id: "a-1-skip", role: "assistant" }, parts: [{ type: "text", text: "This is unrelated to this change." }] },
+  ]);
+  assert.equal(first.decision, "block");
+
+  const second = await engine.inspect("no-blind-skip", "/tmp", [
+    { info: { id: "u-2-skip", role: "user" }, parts: [{ type: "text", text: "next" }] },
+    {
+      info: { id: "a-2-skip", role: "assistant" },
+      parts: [
+        {
+          type: "tool",
+          state: {
+            input: {
+              path: "src/key.ts",
+              content: 'const key = "sk-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";',
+            },
+          },
+        },
+      ],
+    },
+  ]);
+  assert.equal(second.decision, "block");
+  assert.ok(second.results.some((result) => result.ruleId === "security/no-secrets" && result.decision === "block"));
+});
+
+test("GuardEngine retries the same message after a transient rule exception", async () => {
+  const engine = new GuardEngine({
+    enabled: true,
+    rules: {
+      "discipline/no-evasion": "off",
+      "discipline/no-apology": "off",
+      "quality/no-shortcuts": "off",
+      "integrity/no-stubs": "off",
+      "safety/no-truncation": "off",
+      "testing/no-cheat": "off",
+      "security/no-secrets": "off",
+      "manifest/no-ghost-deps": "off",
+      "runtime/circuit-breaker": "off",
+    },
+  });
+  let calls = 0;
+  engine.registerRule({
+    id: "custom/throws-once",
+    description: "test",
+    inspect() {
+      calls += 1;
+      if (calls === 1) throw new Error("transient");
+      return {
+        ruleId: "custom/throws-once",
+        decision: "block",
+        findings: [{ ruleId: "custom/throws-once", pattern: "x", messageSnippet: "x", description: "x" }],
+        remediationPrompt: "fix",
+      };
+    },
+  });
+
+  const messages = [
+    { info: { id: "u-retry", role: "user" }, parts: [{ type: "text", text: "run" }] },
+    { info: { id: "a-retry", role: "assistant" }, parts: [{ type: "text", text: "done" }] },
+  ];
+
+  await assert.rejects(() => engine.inspect("retry-session", "/tmp", messages), /transient/);
+  const second = await engine.inspect("retry-session", "/tmp", messages);
+  assert.equal(calls, 2);
+  assert.equal(second.decision, "block");
+});
+
+test("runtime/circuit-breaker keys repetition by tool invocation, not only error text", () => {
+  const part = (command, error) => ({
+    type: "tool",
+    tool: "bash",
+    state: { status: "error", input: { command }, error },
+  });
+
+  const base = {
+    sessionID: "breaker-signature",
+    directory: "/tmp",
+    messages: [],
+    ruleConfig: {},
+  };
+
+  const differentCommands = {
+    ...base,
+    currentTurn: [
+      {
+        info: { id: "a-different", role: "assistant" },
+        parts: [
+          part("cat a", "No such file or directory"),
+          part("cat b", "No such file or directory"),
+          part("cat c", "No such file or directory"),
+        ],
+      },
+    ],
+  };
+  assert.equal(circuitBreakerRule.inspect(differentCommands).decision, "pass");
+
+  const sameCommand = {
+    ...base,
+    currentTurn: [
+      {
+        info: { id: "a-same", role: "assistant" },
+        parts: [
+          part("curl example", "attempt 1: connection refused"),
+          part("curl example", "attempt 2: connection refused"),
+          part("curl example", "attempt 3: connection refused"),
+        ],
+      },
+    ],
+  };
+  assert.equal(circuitBreakerRule.inspect(sameCommand).decision, "block");
+});
+
+test("OpenCode v2 setup consumes the async event stream and sends synthetic remediation", async () => {
+  const { OpencodeGuardian } = await import("../dist/index.js");
+  let subscribeOptions;
+  let contextCalls = 0;
+  let remediation = "";
+
+  const remediated = new Promise((resolve) => {
+    const context = {
+      location: { directory: process.cwd() },
+      event: {
+        subscribe(options) {
+          subscribeOptions = options;
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "session.idle", data: { sessionID: "v2-session" } };
+            },
+          };
+        },
+      },
+      session: {
+        async context({ sessionID }) {
+          contextCalls += 1;
+          assert.equal(sessionID, "v2-session");
+          return [
+            { id: "v2-user", type: "user", time: { created: 1 }, text: "fix it" },
+            {
+              id: "v2-assistant",
+              type: "assistant",
+              time: { created: 2 },
+              agent: "orchestrator",
+              model: { providerID: "test", modelID: "test" },
+              content: [{ type: "text", text: "This is unrelated to this change." }],
+            },
+          ];
+        },
+        async synthetic(input) {
+          remediation = input.text;
+          resolve();
+          return {};
+        },
+      },
+    };
+
+    Promise.resolve(OpencodeGuardian.setup(context)).then((cleanup) => {
+      remediated.finally(() => cleanup?.());
+    });
+  });
+
+  await Promise.race([
+    remediated,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("v2 remediation timeout")), 1000)),
+  ]);
+
+  assert.ok(subscribeOptions?.signal instanceof AbortSignal);
+  assert.equal(contextCalls, 1);
+  assert.ok(remediation.startsWith("[opencode-guardian remediation]"));
+});

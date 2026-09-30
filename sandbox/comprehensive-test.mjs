@@ -1,9 +1,9 @@
 import path from "node:path";
 import assert from "node:assert/strict";
-import OpencodeGuard from "../dist/index.js";
+import OpencodeGuardian from "../dist/index.js";
 
 console.log("================================================================================");
-console.log("     OPENCODE-GUARD — COMPREHENSIVE END-TO-END SCENARIO TEST SUITE");
+console.log("     OPENCODE-GUARDIAN — COMPREHENSIVE END-TO-END SCENARIO TEST SUITE");
 console.log("================================================================================");
 
 const sandboxDir = path.dirname(new URL(import.meta.url).pathname);
@@ -287,7 +287,7 @@ for (const sc of SCENARIOS) {
     },
   };
 
-  const hooks = await OpencodeGuard.server({
+  const hooks = await OpencodeGuardian.server({
     client: mockClient,
     directory: sandboxDir,
   });

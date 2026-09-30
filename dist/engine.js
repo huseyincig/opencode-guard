@@ -10,6 +10,7 @@ import { noSecretsRule } from "./rules/no-secrets.js";
 import { noGhostDepsRule } from "./rules/no-ghost-deps.js";
 import { circuitBreakerRule } from "./rules/circuit-breaker.js";
 import { noApologyRule } from "./rules/no-apology.js";
+export const REMEDIATION_MARKER = "[opencode-guardian remediation]";
 export const BUILTIN_RULES = {
     "discipline/no-evasion": noEvasionRule,
     "discipline/no-apology": noApologyRule,
@@ -21,6 +22,20 @@ export const BUILTIN_RULES = {
     "manifest/no-ghost-deps": noGhostDepsRule,
     "runtime/circuit-breaker": circuitBreakerRule,
 };
+const DEFAULT_CONFIG = {
+    enabled: true,
+    rules: {
+        "discipline/no-evasion": "error",
+        "discipline/no-apology": "error",
+        "quality/no-shortcuts": "error",
+        "integrity/no-stubs": "error",
+        "safety/no-truncation": "error",
+        "testing/no-cheat": "error",
+        "security/no-secrets": "error",
+        "manifest/no-ghost-deps": "error",
+        "runtime/circuit-breaker": "error",
+    },
+};
 export function loadConfig(directory) {
     const candidatePaths = [
         directory ? path.resolve(directory, "opencode-guardian.json") : null,
@@ -31,42 +46,36 @@ export function loadConfig(directory) {
         path.resolve(os.homedir(), ".config/opencode/opencode-guard.json"),
     ].filter(Boolean);
     for (const configPath of candidatePaths) {
+        if (!fs.existsSync(configPath))
+            continue;
         try {
-            if (fs.existsSync(configPath)) {
-                const raw = fs.readFileSync(configPath, "utf8");
-                return JSON.parse(raw);
+            const raw = fs.readFileSync(configPath, "utf8");
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                throw new Error("configuration root must be a JSON object");
             }
+            return parsed;
         }
-        catch {
-            // Ignore parse errors and fallback
+        catch (error) {
+            console.error(`[opencode-guardian] Invalid config at ${configPath}; trying fallback:`, error);
         }
     }
-    // Default configuration: all builtin rules enabled as "error"
-    return {
-        enabled: true,
-        rules: {
-            "discipline/no-evasion": "error",
-            "discipline/no-apology": "error",
-            "quality/no-shortcuts": "error",
-            "integrity/no-stubs": "error",
-            "safety/no-truncation": "error",
-            "testing/no-cheat": "error",
-            "security/no-secrets": "error",
-            "manifest/no-ghost-deps": "error",
-            "runtime/circuit-breaker": "error",
-        },
-    };
+    return DEFAULT_CONFIG;
+}
+function isGuardianRemediationMessage(message) {
+    if (message.info.role !== "user")
+        return false;
+    return Boolean(message.parts?.some((part) => part.synthetic === true ||
+        (part.type === "text" &&
+            typeof part.text === "string" &&
+            part.text.trimStart().startsWith(REMEDIATION_MARKER))));
 }
 export function extractCurrentTurn(messages) {
-    // Check if session belongs to a subagent
-    const isSubagent = messages.length > 0 &&
-        Boolean(messages[0].info?.agent) &&
-        messages[0].info.agent !== "orchestrator";
-    // Check if the last user message was a detector synthetic remediation prompt
+    const firstAgent = messages.find((m) => typeof m.info?.agent === "string" && m.info.agent.length > 0)?.info.agent;
+    const isSubagent = Boolean(firstAgent && firstAgent !== "orchestrator");
     const lastUserMessage = messages.findLast((m) => m.info.role === "user");
-    const isRemediationResponse = Boolean(lastUserMessage?.parts?.some((p) => p.synthetic === true));
-    // Find index of last real human user message
-    const lastHumanUserIndex = messages.findLastIndex((m) => m.info.role === "user" && !m.parts?.some((p) => p.synthetic === true));
+    const isRemediationResponse = Boolean(lastUserMessage && isGuardianRemediationMessage(lastUserMessage));
+    const lastHumanUserIndex = messages.findLastIndex((m) => m.info.role === "user" && !isGuardianRemediationMessage(m));
     const currentTurn = lastHumanUserIndex < 0 ? messages : messages.slice(lastHumanUserIndex);
     return {
         isSubagent,
@@ -74,50 +83,65 @@ export function extractCurrentTurn(messages) {
         currentTurn,
     };
 }
+function sanitizeRuleConfig(setting) {
+    if (!setting || typeof setting !== "object" || Array.isArray(setting)) {
+        return {};
+    }
+    const config = { ...setting };
+    if (config.severity !== undefined &&
+        !["error", "warn", "off"].includes(config.severity)) {
+        delete config.severity;
+    }
+    if (config.customPhrases !== undefined) {
+        config.customPhrases = Array.isArray(config.customPhrases)
+            ? config.customPhrases.filter((value) => typeof value === "string" && value.trim().length > 0)
+            : undefined;
+    }
+    if (config.exceptions !== undefined) {
+        config.exceptions = Array.isArray(config.exceptions)
+            ? config.exceptions.filter((value) => typeof value === "string" && value.trim().length > 0)
+            : undefined;
+    }
+    return config;
+}
 export class GuardEngine {
     config;
     rules = new Map();
-    skipNextIdle = new Set();
     inspectedMessages = new Map();
     constructor(config) {
         this.config = config ?? { enabled: true };
-        for (const [id, rule] of Object.entries(BUILTIN_RULES)) {
+        for (const rule of Object.values(BUILTIN_RULES)) {
             this.registerRule(rule);
         }
     }
     registerRule(rule) {
         this.rules.set(rule.id, rule);
     }
+    forgetSession(sessionID) {
+        this.inspectedMessages.delete(sessionID);
+    }
     async inspect(sessionID, directory, messages) {
-        if (this.config.enabled === false) {
+        if (this.config.enabled === false || messages.length === 0) {
             return { decision: "pass", results: [] };
         }
-        if (messages.length === 0) {
-            return { decision: "pass", results: [] };
-        }
-        // Loop guard: skip if next idle is flagged
-        if (this.skipNextIdle.delete(sessionID)) {
-            return { decision: "pass", results: [] };
-        }
-        // Dedup: check last assistant message id
         const lastAssistant = messages.findLast((m) => m.info.role === "assistant");
         const messageID = lastAssistant?.info.id;
         if (!messageID || this.inspectedMessages.get(sessionID) === messageID) {
             return { decision: "pass", results: [] };
         }
-        this.inspectedMessages.set(sessionID, messageID);
-        // Extract turn with false-positive lifecycle guards
         const { isSubagent, isRemediationResponse, currentTurn } = extractCurrentTurn(messages);
         if (isRemediationResponse) {
+            this.inspectedMessages.set(sessionID, messageID);
             return { decision: "pass", results: [] };
         }
         const results = [];
         const blockingPrompts = [];
         for (const [ruleId, rule] of this.rules.entries()) {
             const ruleSetting = this.config.rules?.[ruleId];
-            if (ruleSetting === "off")
+            const ruleConfig = sanitizeRuleConfig(typeof ruleSetting === "object" ? ruleSetting : {});
+            const severity = typeof ruleSetting === "string" ? ruleSetting : ruleConfig.severity;
+            if (severity === "off")
                 continue;
-            const ruleConfig = typeof ruleSetting === "object" ? ruleSetting : {};
             const context = {
                 sessionID,
                 directory,
@@ -128,17 +152,18 @@ export class GuardEngine {
             };
             const res = await rule.inspect(context);
             results.push(res);
-            const isWarn = ruleSetting === "warn" || ruleConfig.severity === "warn";
-            if (!isWarn && res.decision === "block" && res.remediationPrompt) {
+            if (severity !== "warn" &&
+                res.decision === "block" &&
+                res.remediationPrompt) {
                 blockingPrompts.push(res.remediationPrompt);
             }
         }
+        this.inspectedMessages.set(sessionID, messageID);
         if (blockingPrompts.length > 0) {
-            this.skipNextIdle.add(sessionID);
             return {
                 decision: "block",
                 results,
-                combinedRemediationPrompt: blockingPrompts.join("\n\n---\n\n"),
+                combinedRemediationPrompt: `${REMEDIATION_MARKER}\n${blockingPrompts.join("\n\n---\n\n")}`,
             };
         }
         return {

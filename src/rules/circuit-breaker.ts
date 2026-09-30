@@ -4,8 +4,8 @@ function stringifyError(err: unknown): string {
   if (!err) return "";
   if (typeof err === "string") return err;
   if (typeof err === "object") {
-    if ("message" in err && typeof (err as any).message === "string") {
-      return (err as any).message;
+    if ("message" in err && typeof (err as { message?: unknown }).message === "string") {
+      return (err as { message: string }).message;
     }
     try {
       return JSON.stringify(err);
@@ -16,32 +16,51 @@ function stringifyError(err: unknown): string {
   return String(err);
 }
 
-function extractToolErrors(context: TurnInspectionContext): string[] {
-  const errors: string[] = [];
+function stableStringify(value: unknown): string {
+  const seen = new WeakSet<object>();
+
+  const normalize = (input: unknown): unknown => {
+    if (input === null || typeof input !== "object") return input;
+    if (seen.has(input)) return "[Circular]";
+    seen.add(input);
+
+    if (Array.isArray(input)) return input.map(normalize);
+
+    return Object.fromEntries(
+      Object.entries(input as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, entry]) => [key, normalize(entry)])
+    );
+  };
+
+  try {
+    return JSON.stringify(normalize(value));
+  } catch {
+    return String(value);
+  }
+}
+
+interface ToolFailure {
+  signature: string;
+  errorText: string;
+}
+
+function extractToolFailures(context: TurnInspectionContext): ToolFailure[] {
+  const failures: ToolFailure[] = [];
 
   for (const msg of context.currentTurn) {
     for (const part of msg.parts) {
       if (part.type !== "tool") continue;
-      const state = part.state as
-        | {
-            status?: string;
-            error?: unknown;
-            output?: unknown;
-            exitCode?: unknown;
-            metadata?: { exit?: unknown; output?: unknown };
-          }
-        | undefined;
+      const state = part.state;
       if (!state) continue;
 
       let failed = false;
       let rawText = "";
 
       if (state.status === "error") {
-        // Tool-level exception (invalid input, thrown error).
         failed = true;
         rawText = stringifyError(state.error);
       } else if (state.status === "completed") {
-        // Command ran but the process itself failed (non-zero exit).
         const exitValue = state.metadata?.exit ?? state.exitCode;
         const exitNum =
           typeof exitValue === "number"
@@ -54,13 +73,16 @@ function extractToolErrors(context: TurnInspectionContext): string[] {
           typeof state.output === "string"
             ? state.output
             : typeof state.metadata?.output === "string"
-              ? state.metadata.output
+              ? (state.metadata.output as string)
               : "";
 
         const exitMatch = /\[exit code:\s*(-?\d+)\]/i.exec(outputText);
         const outputExit = exitMatch ? Number(exitMatch[1]) : Number.NaN;
 
-        if ((!Number.isNaN(exitNum) && exitNum !== 0) || (!Number.isNaN(outputExit) && outputExit !== 0)) {
+        if (
+          (!Number.isNaN(exitNum) && exitNum !== 0) ||
+          (!Number.isNaN(outputExit) && outputExit !== 0)
+        ) {
           failed = true;
           rawText = outputText || stringifyError(state.error);
         }
@@ -69,62 +91,66 @@ function extractToolErrors(context: TurnInspectionContext): string[] {
       if (!failed) continue;
 
       const errorText = rawText.trim();
-      if (errorText.length > 10 && errorText !== "[object Object]") {
-        const signature = errorText.replace(/\s+/g, " ").slice(0, 200);
-        errors.push(signature);
-      }
+      if (errorText.length <= 10 || errorText === "[object Object]") continue;
+
+      const toolName =
+        typeof part.tool === "string"
+          ? part.tool
+          : typeof part.name === "string"
+            ? part.name
+            : "tool";
+      const signature = `${toolName}:${stableStringify(state.input ?? {})}`;
+
+      failures.push({
+        signature,
+        errorText: errorText.replace(/\s+/g, " ").slice(0, 200),
+      });
     }
   }
 
-  return errors;
+  return failures;
 }
 
 export const circuitBreakerRule: GuardRule = {
   id: "runtime/circuit-breaker",
-  description: "Detects infinite error loops and trips the breaker when the agent repeats identical failures.",
+  description: "Detects infinite error loops and trips the breaker when the agent repeats the same failing tool invocation.",
   inspect: (context: TurnInspectionContext): RuleResult => {
-    const errors = extractToolErrors(context);
-    if (errors.length < 3) {
+    const failures = extractToolFailures(context);
+    if (failures.length < 3) {
       return { ruleId: "runtime/circuit-breaker", decision: "pass", findings: [] };
     }
 
-    const counts = new Map<string, number>();
-    for (const err of errors) {
-      counts.set(err, (counts.get(err) ?? 0) + 1);
+    const counts = new Map<string, { count: number; errorText: string }>();
+    for (const failure of failures) {
+      const current = counts.get(failure.signature);
+      counts.set(failure.signature, {
+        count: (current?.count ?? 0) + 1,
+        errorText: current?.errorText ?? failure.errorText,
+      });
     }
 
     const findings: RuleFinding[] = [];
-    for (const [errSignature, count] of counts.entries()) {
-      if (count >= 3) {
-        findings.push({
-          ruleId: "runtime/circuit-breaker",
-          pattern: "Repeated error loop",
-          messageSnippet: errSignature,
-          description: `Identical error encountered ${count} times in the current turn: "${errSignature}"`,
-        });
-      }
+    for (const [signature, { count, errorText }] of counts.entries()) {
+      if (count < 3) continue;
+
+      findings.push({
+        ruleId: "runtime/circuit-breaker",
+        pattern: "Repeated error loop",
+        messageSnippet: errorText,
+        description: `Same failing tool invocation repeated ${count} times without progress: "${signature.slice(0, 160)}"`,
+      });
     }
 
     if (findings.length === 0) {
-      return {
-        ruleId: "runtime/circuit-breaker",
-        decision: "pass",
-        findings: [],
-      };
+      return { ruleId: "runtime/circuit-breaker", decision: "pass", findings: [] };
     }
 
-    const list = findings.map((f) => `  - ${f.description}`).join("\n");
+    const list = findings.map((f) => `  - ${f.description}\n    Last error: ${f.messageSnippet}`).join("\n");
     const remediationPrompt =
       `Circuit breaker tripped! Repetitive error loop detected:\n${list}\n\n` +
-      `You have hit the exact same failure 3 or more times without progress. ` +
-      `Stop repeating the same failing command. Please step back, reconsider your hypothesis, ` +
-      `investigate the underlying root cause, or ask the user for clarification.`;
+      `You repeated the same failing tool invocation 3 or more times without progress. ` +
+      `Stop repeating it, reconsider the hypothesis, investigate the root cause, or ask the user for missing information.`;
 
-    return {
-      ruleId: "runtime/circuit-breaker",
-      decision: "block",
-      findings,
-      remediationPrompt,
-    };
+    return { ruleId: "runtime/circuit-breaker", decision: "block", findings, remediationPrompt };
   },
 };

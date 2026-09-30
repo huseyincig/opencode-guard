@@ -1,7 +1,7 @@
 {
   "name": "guard-sandbox",
   "version": "1.0.0",
-  "description": "Safe, isolated sandbox environment for testing opencode-guard",
+  "description": "Safe, isolated sandbox environment for testing opencode-guardian",
   "private": true,
   "dependencies": {
     "chalk": "^5.0.0"

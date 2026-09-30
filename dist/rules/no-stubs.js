@@ -1,3 +1,4 @@
+import { extractLikelyShellMutation } from "../tool-input.js";
 /**
  * Patterns that indicate fake or stubbed implementations in code.
  */
@@ -90,6 +91,10 @@ export const noStubsRule = {
                     const patchText = extractAddedLines(input.patchText ?? input.patch);
                     if (patchText) {
                         checkCode(patchText, "patch added lines");
+                    }
+                    const shellMutation = extractLikelyShellMutation(input);
+                    if (shellMutation) {
+                        checkCode(shellMutation, "shell file mutation");
                     }
                 }
             }

@@ -1,4 +1,5 @@
 import { sanitizeProseForInspection } from "../prose.js";
+import { extractLikelyShellMutation } from "../tool-input.js";
 export const DEFAULT_HEDGING_PATTERNS = [
     // Deferred work
     "for now",
@@ -67,6 +68,8 @@ function extractSnippet(text, matchIndex, matchLen) {
 function isWithinException(text, pos, len, exceptions) {
     const lowerText = text.toLowerCase();
     for (const exc of exceptions) {
+        if (!exc)
+            continue;
         let fromIdx = 0;
         while (true) {
             const excIdx = lowerText.indexOf(exc, fromIdx);
@@ -87,11 +90,13 @@ export const noShortcutsRule = {
     inspect: (context) => {
         const patterns = [
             ...DEFAULT_HEDGING_PATTERNS,
-            ...(context.ruleConfig.customPhrases ?? []),
+            ...(context.ruleConfig.customPhrases ?? []).filter((phrase) => phrase.trim().length > 0),
         ];
         const exceptions = [
             ...DEFAULT_EXCEPTIONS,
-            ...(context.ruleConfig.exceptions?.map((e) => e.toLowerCase()) ?? []),
+            ...(context.ruleConfig.exceptions
+                ?.map((e) => e.trim().toLowerCase())
+                .filter(Boolean) ?? []),
         ];
         const findings = [];
         const seen = new Set();
@@ -162,6 +167,10 @@ export const noShortcutsRule = {
                     const patchText = extractAddedPatchLines(input.patchText ?? input.patch);
                     if (patchText) {
                         checkText(patchText, "patch added lines");
+                    }
+                    const shellMutation = extractLikelyShellMutation(input);
+                    if (shellMutation) {
+                        checkText(shellMutation, "shell file mutation");
                     }
                 }
             }
