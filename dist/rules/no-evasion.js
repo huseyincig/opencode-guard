@@ -73,7 +73,7 @@ export const noEvasionRule = {
     inspect: (context) => {
         const patterns = [
             ...DEFAULT_PATTERNS,
-            ...(context.ruleConfig.customPhrases ?? []),
+            ...(context.ruleConfig.customPhrases ?? []).filter((phrase) => phrase.trim().length > 0),
         ];
         const findings = [];
         const seenPatterns = new Set();

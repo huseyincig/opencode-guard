@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OpenCode: v1 & v2](https://img.shields.io/badge/OpenCode-v1%20%26%20v2%20Compatible-blue.svg)](https://github.com/huseyincig/opencode-guardian)
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
-[![Tests: 100% Pass](https://img.shields.io/badge/Tests-32%2F32%20Passing-brightgreen.svg)](tests/)
+[![Tests: 100% Pass](https://img.shields.io/badge/Tests-43%2F43%20Passing-brightgreen.svg)](tests/)
 
 A universal, high-performance quality and safety guardian plugin for **OpenCode** AI agents.
 
@@ -22,7 +22,7 @@ Traditional agent detectors often rely on external platform-specific binaries (R
 - **Zero-Binary, Pure TypeScript:** Native in-memory execution (~0.5ms per inspection) with zero external runtime dependencies.
 - **Dual-Mode Host Support:** Works seamlessly with both **OpenCode 1.x** (via `server` hook) and **OpenCode 2.x** (via `setup` and `event.subscribe`).
 - **Pre-Built Distribution:** Pre-compiled `dist/` is included in the package and git repository — no build toolchain (`tsc`) required on target systems.
-- **Zero False-Positives:** Localized exception boundaries (e.g., `TemporaryDirectory` won't mask subsequent hedging), AST/patch header extraction, and template variable filtering.
+- **False-Positive Defenses:** Localized exception boundaries, comment/string-aware dependency scanning, patch-path extraction, and explicit template-variable filtering.
 - **Anti-Loop Architecture:** Automatically detects synthetic remediation prompts to ensure the agent never gets trapped in an infinite feedback loop.
 
 ---
@@ -31,17 +31,23 @@ Traditional agent detectors often rely on external platform-specific binaries (R
 
 ### Method 1: NPM Package (Recommended)
 
-Install the plugin directly via OpenCode CLI:
+Add the package to the OpenCode configuration used by your host.
 
-```bash
-opencode plugin opencode-guardian
-```
-
-Or add it to your OpenCode configuration (`~/.config/opencode/opencode.json` or project-local `opencode.json`):
+**OpenCode v1:**
 
 ```json
 {
   "plugin": [
+    "opencode-guardian@latest"
+  ]
+}
+```
+
+**OpenCode v2:**
+
+```json
+{
+  "plugins": [
     "opencode-guardian@latest"
   ]
 }
@@ -55,17 +61,29 @@ If developing or testing locally:
 git clone https://github.com/huseyincig/opencode-guardian.git ~/.config/opencode/vendor/opencode-guardian
 ```
 
-Add the absolute `file:///` path to your OpenCode configuration (`~/.config/opencode/opencode.json`):
+Use the absolute `file:///` path in the matching host configuration.
+
+**OpenCode v1:**
 
 ```json
 {
   "plugin": [
-    "file:///root/.config/opencode/vendor/opencode-guardian"
+    "file:///home/me/.config/opencode/vendor/opencode-guardian"
   ]
 }
 ```
 
-*(Note: For backward compatibility, `opencode-guard` continues to work seamlessly as an alias.)*
+**OpenCode v2:**
+
+```json
+{
+  "plugins": [
+    "file:///home/me/.config/opencode/vendor/opencode-guardian"
+  ]
+}
+```
+
+> `OpencodeGuard` remains a JavaScript export alias for source compatibility. The npm package name `opencode-guard` is **not** an alias for this project; install `opencode-guardian`.
 
 ---
 
@@ -133,9 +151,9 @@ flowchart TD
 ```
 
 1. **Inspection on Idle:** When the AI agent completes its actions, OpenCode triggers `session.idle`.
-2. **Deep Turn Analysis:** The Guardian inspects the assistant's text and all tool inputs (file edits, writes, patches) against active rules.
+2. **Deep Turn Analysis:** The Guardian inspects assistant text and supported file-mutation tool inputs, including writes, edits, patches, and common shell file-write forms.
 3. **Structured Remediation:** If a violation is caught, a structured, actionable remediation prompt is sent back to the agent with the exact offending snippet.
-4. **Loop Protection:** When the agent responds to the remediation prompt (`synthetic: true`), the engine detects this and allows the response through, preventing deadlock.
+4. **Loop Protection:** V2 uses native synthetic messages; V1 uses a Guardian remediation marker. The engine recognizes either form and avoids re-blocking its own remediation turn.
 
 ---
 
@@ -144,7 +162,7 @@ flowchart TD
 The repository comes with a comprehensive test suite covering unit behaviors and end-to-end sandbox simulations:
 
 ```bash
-# Run 32/32 unit tests (~75ms)
+# Build and run 43/43 unit/regression tests
 npm test
 
 # Typecheck TypeScript sources
@@ -165,10 +183,11 @@ opencode-guardian/
 │   ├── index.ts         # Dual-Mode entry point (OpenCode v1 server & v2 setup)
 │   ├── engine.ts        # GuardEngine inspection orchestrator & config loader
 │   ├── prose.ts         # Prose normalization & blockquote/citation stripper
+│   ├── tool-input.ts    # Common shell/file-mutation input extraction
 │   ├── types.ts         # TypeScript interfaces & definitions
 │   └── rules/           # The 9 modular rule implementations
 ├── tests/
-│   └── guard.test.mjs   # Comprehensive 32-case unit test suite
+│   └── guard.test.mjs   # Comprehensive 43-case unit/regression suite
 ├── index.js             # Root module export for universal module loaders
 ├── server.js            # Root server export for OpenCode plugin discovery
 ├── package.json

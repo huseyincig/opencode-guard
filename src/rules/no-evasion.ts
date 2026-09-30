@@ -76,7 +76,7 @@ export const noEvasionRule: GuardRule = {
   inspect: (context: TurnInspectionContext): RuleResult => {
     const patterns = [
       ...DEFAULT_PATTERNS,
-      ...(context.ruleConfig.customPhrases ?? []),
+      ...(context.ruleConfig.customPhrases ?? []).filter((phrase) => phrase.trim().length > 0),
     ];
 
     const findings: RuleFinding[] = [];

@@ -1,3 +1,4 @@
+import { extractLikelyShellMutation } from "../tool-input.js";
 /**
  * Patterns that indicate weakened or cheated tests.
  */
@@ -51,13 +52,14 @@ export const TEST_CHEAT_PATTERNS = [
 function isTestFilePath(filePath) {
     if (!filePath)
         return false;
-    const lower = filePath.toLowerCase();
+    const lower = filePath.toLowerCase().replace(/\\/g, "/");
+    const base = lower.split("/").pop() ?? lower;
     return (lower.includes(".test.") ||
         lower.includes(".spec.") ||
         lower.includes("_test.") ||
         lower.includes("/tests/") ||
         lower.includes("/test/") ||
-        lower.startsWith("test_"));
+        base.startsWith("test_"));
 }
 function hasTestContext(code) {
     return /\b(?:describe|it|test|suite)\s*\(|def\s+test_|func\s+Test|#\[test\]/.test(code);
@@ -149,6 +151,10 @@ export const noCheatRule = {
                     const patchText = extractAddedLines(patchRaw);
                     if (patchText) {
                         checkTestCode(patchText, targetFile);
+                    }
+                    const shellMutation = extractLikelyShellMutation(input);
+                    if (shellMutation) {
+                        checkTestCode(shellMutation);
                     }
                 }
             }

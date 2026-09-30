@@ -1,8 +1,8 @@
 import path from "node:path";
-import OpencodeGuard from "../dist/index.js";
+import OpencodeGuardian from "../dist/index.js";
 
 console.log("==================================================");
-console.log("  OPENCODE-GUARD ISOLATED SANDBOX SMOKE TEST");
+console.log("  OPENCODE-GUARDIAN ISOLATED SANDBOX SMOKE TEST");
 console.log("==================================================");
 
 const sandboxDir = path.dirname(new URL(import.meta.url).pathname);
@@ -41,8 +41,8 @@ const mockClient = {
 };
 
 // Initialize plugin in OpenCode v1 mode
-console.log("\n[1] Initializing OpencodeGuard via OpenCode v1 'server' adapter...");
-const hooks = await OpencodeGuard.server({
+console.log("\n[1] Initializing OpencodeGuardian via OpenCode v1 'server' adapter...");
+const hooks = await OpencodeGuardian.server({
   client: mockClient,
   directory: sandboxDir,
 });
@@ -59,13 +59,13 @@ await hooks.event({
 });
 
 if (lastPrompt) {
-  console.log("\n[3] RESULT: 🛡️ OpencodeGuard successfully intercepted and blocked the agent!");
+  console.log("\n[3] RESULT: 🛡️ OpencodeGuardian successfully intercepted and blocked the agent!");
   console.log("--------------------------------------------------");
   console.log("Remediation prompt sent to agent:\n");
   console.log(lastPrompt);
   console.log("--------------------------------------------------");
   console.log("\n✓ All systems operational in isolated sandbox. No live processes touched.");
 } else {
-  console.error("FAIL: OpencodeGuard did not intercept the turn.");
+  console.error("FAIL: OpencodeGuardian did not intercept the turn.");
   process.exit(1);
 }

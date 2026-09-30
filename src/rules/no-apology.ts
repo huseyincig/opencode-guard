@@ -78,10 +78,12 @@ export const noApologyRule: GuardRule = {
     const findings: RuleFinding[] = [];
     const seenPatterns = new Set<string>();
 
-    const customPatterns: ApologyPattern[] = (context.ruleConfig.customPhrases ?? []).map((phrase) => ({
+    const customPatterns: ApologyPattern[] = (context.ruleConfig.customPhrases ?? [])
+      .filter((phrase) => phrase.trim().length > 0)
+      .map((phrase) => ({
       name: `Custom ("${phrase}")`,
-      regex: new RegExp(`(?<!\\p{L})${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\p{L})`, "iu"),
-    }));
+        regex: new RegExp(`(?<!\\p{L})${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\p{L})`, "iu"),
+      }));
 
     const activePatterns = [...MULTILINGUAL_APOLOGY_PATTERNS, ...customPatterns];
 

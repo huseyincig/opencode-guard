@@ -16,6 +16,7 @@ export interface GuardConfig {
   debug?: boolean;
   rules?: {
     "discipline/no-evasion"?: Severity | GuardRuleConfig;
+    "discipline/no-apology"?: Severity | GuardRuleConfig;
     "quality/no-shortcuts"?: Severity | GuardRuleConfig;
     "integrity/no-stubs"?: Severity | GuardRuleConfig;
     "safety/no-truncation"?: Severity | GuardRuleConfig;
@@ -39,6 +40,8 @@ export interface MessagePart {
     raw?: unknown;
     patch?: string;
     patchText?: string;
+    metadata?: Record<string, unknown>;
+    exitCode?: unknown;
   };
   [key: string]: unknown;
 }

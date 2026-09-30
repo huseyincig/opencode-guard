@@ -1,4 +1,5 @@
 import type { GuardRule, RuleFinding, RuleResult, TurnInspectionContext } from "../types.js";
+import { extractLikelyShellMutation } from "../tool-input.js";
 
 /**
  * Patterns that indicate weakened or cheated tests.
@@ -53,14 +54,15 @@ export const TEST_CHEAT_PATTERNS: { regex: RegExp; name: string }[] = [
 
 function isTestFilePath(filePath?: string): boolean {
   if (!filePath) return false;
-  const lower = filePath.toLowerCase();
+  const lower = filePath.toLowerCase().replace(/\\/g, "/");
+  const base = lower.split("/").pop() ?? lower;
   return (
     lower.includes(".test.") ||
     lower.includes(".spec.") ||
     lower.includes("_test.") ||
     lower.includes("/tests/") ||
     lower.includes("/test/") ||
-    lower.startsWith("test_")
+    base.startsWith("test_")
   );
 }
 
@@ -161,6 +163,10 @@ export const noCheatRule: GuardRule = {
           const patchText = extractAddedLines(patchRaw);
           if (patchText) {
             checkTestCode(patchText, targetFile);
+          }
+          const shellMutation = extractLikelyShellMutation(input);
+          if (shellMutation) {
+            checkTestCode(shellMutation);
           }
         }
       }
