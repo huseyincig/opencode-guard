@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OpenCode: v1 & v2](https://img.shields.io/badge/OpenCode-v1%20%26%20v2%20Compatible-blue.svg)](https://github.com/huseyincig/opencode-guardian)
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
-[![Tests: 100% Pass](https://img.shields.io/badge/Tests-43%2F43%20Passing-brightgreen.svg)](tests/)
+[![Tests: 100% Pass](https://img.shields.io/badge/Tests-44%2F44%20Passing-brightgreen.svg)](tests/)
 
 A universal, high-performance quality and safety guardian plugin for **OpenCode** AI agents.
 
@@ -20,7 +20,7 @@ Traditional agent detectors often rely on external platform-specific binaries (R
 **OpenCode Guardian** provides:
 - **Native Lifecycle Integration:** Hooks directly into OpenCode's `session.idle` event — zero manual `.md` configuration, zero boilerplate.
 - **Zero-Binary, Pure TypeScript:** Native in-memory execution (~0.5ms per inspection) with zero external runtime dependencies.
-- **Dual-Mode Host Support:** Works seamlessly with both **OpenCode 1.x** (via `server` hook) and **OpenCode 2.x** (via `setup` and `event.subscribe`).
+- **Dual-Mode Host Support:** Works with **OpenCode 1.x** (via `server`) and full **OpenCode 2.x** hosts (via `setup` and `event.subscribe`); transition builds that invoke `setup()` without the complete V2 capability surface are detected and ignored safely.
 - **Pre-Built Distribution:** Pre-compiled `dist/` is included in the package and git repository — no build toolchain (`tsc`) required on target systems.
 - **False-Positive Defenses:** Localized exception boundaries, comment/string-aware dependency scanning, patch-path extraction, and explicit template-variable filtering.
 - **Anti-Loop Architecture:** Automatically detects synthetic remediation prompts to ensure the agent never gets trapped in an infinite feedback loop.
@@ -162,7 +162,7 @@ flowchart TD
 The repository comes with a comprehensive test suite covering unit behaviors and end-to-end sandbox simulations:
 
 ```bash
-# Build and run 43/43 unit/regression tests
+# Build and run 44/44 unit/regression tests
 npm test
 
 # Typecheck TypeScript sources
@@ -187,7 +187,7 @@ opencode-guardian/
 │   ├── types.ts         # TypeScript interfaces & definitions
 │   └── rules/           # The 9 modular rule implementations
 ├── tests/
-│   └── guard.test.mjs   # Comprehensive 43-case unit/regression suite
+│   └── guard.test.mjs   # Comprehensive 44-case unit/regression suite
 ├── index.js             # Root module export for universal module loaders
 ├── server.js            # Root server export for OpenCode plugin discovery
 ├── package.json

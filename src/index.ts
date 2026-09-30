@@ -211,16 +211,46 @@ const server: OpenCodeV1ServerPlugin = async ({ client, directory }) => {
 const setup: OpenCodeV2.Plugin["setup"] = async (
   context: OpenCodeV2.Context
 ) => {
+  // OpenCode v1/transition builds may discover the v2-shaped plugin object and
+  // call setup() with a partial context. Treat that as "v2 unavailable" rather
+  // than emitting an initialization error into the TUI.
+  if (
+    !context ||
+    typeof context !== "object" ||
+    typeof context.event?.subscribe !== "function" ||
+    typeof context.session?.context !== "function" ||
+    typeof context.session?.synthetic !== "function"
+  ) {
+    return;
+  }
+
+  const controller = new AbortController();
+  let events: AsyncIterable<unknown>;
+  try {
+    const candidate = context.event.subscribe({
+      signal: controller.signal,
+    });
+    if (
+      !candidate ||
+      typeof (candidate as AsyncIterable<unknown>)[Symbol.asyncIterator] !==
+        "function"
+    ) {
+      controller.abort();
+      return;
+    }
+    events = candidate as AsyncIterable<unknown>;
+  } catch {
+    controller.abort();
+    return;
+  }
+
   const directory = context.location?.directory ?? process.cwd();
   const config = loadConfig(directory);
   const engine = new GuardEngine(config);
-  const controller = new AbortController();
 
   const eventLoop = async () => {
     try {
-      for await (const event of context.event.subscribe({
-        signal: controller.signal,
-      })) {
+      for await (const event of events) {
         const eventData = event as {
           type?: string;
           data?: { sessionID?: string; info?: { id?: string } };

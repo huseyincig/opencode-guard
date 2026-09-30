@@ -169,15 +169,40 @@ const server = async ({ client, directory }) => {
     };
 };
 const setup = async (context) => {
+    // OpenCode v1/transition builds may discover the v2-shaped plugin object and
+    // call setup() with a partial context. Treat that as "v2 unavailable" rather
+    // than emitting an initialization error into the TUI.
+    if (!context ||
+        typeof context !== "object" ||
+        typeof context.event?.subscribe !== "function" ||
+        typeof context.session?.context !== "function" ||
+        typeof context.session?.synthetic !== "function") {
+        return;
+    }
+    const controller = new AbortController();
+    let events;
+    try {
+        const candidate = context.event.subscribe({
+            signal: controller.signal,
+        });
+        if (!candidate ||
+            typeof candidate[Symbol.asyncIterator] !==
+                "function") {
+            controller.abort();
+            return;
+        }
+        events = candidate;
+    }
+    catch {
+        controller.abort();
+        return;
+    }
     const directory = context.location?.directory ?? process.cwd();
     const config = loadConfig(directory);
     const engine = new GuardEngine(config);
-    const controller = new AbortController();
     const eventLoop = async () => {
         try {
-            for await (const event of context.event.subscribe({
-                signal: controller.signal,
-            })) {
+            for await (const event of events) {
                 const eventData = event;
                 if (eventData.type === "session.deleted") {
                     const deletedSessionID = eventData.data?.sessionID ?? eventData.data?.info?.id;

@@ -1291,3 +1291,48 @@ test("OpenCode v2 setup consumes the async event stream and sends synthetic reme
   assert.equal(contextCalls, 1);
   assert.ok(remediation.startsWith("[opencode-guardian remediation]"));
 });
+
+
+test("OpenCode v2 setup silently no-ops on partial v2 contexts", async () => {
+  const { OpencodeGuardian } = await import("../dist/index.js");
+  const originalError = console.error;
+  const errors = [];
+  console.error = (...args) => {
+    errors.push(args);
+  };
+
+  try {
+    const missingEvent = await OpencodeGuardian.setup({
+      location: { directory: process.cwd() },
+      session: {},
+    });
+    assert.equal(missingEvent, undefined);
+
+    const nonIterableSubscription = await OpencodeGuardian.setup({
+      location: { directory: process.cwd() },
+      event: {
+        subscribe() {
+          return {};
+        },
+      },
+      session: {
+        async context() {
+          return [];
+        },
+        async synthetic() {
+          return {};
+        },
+      },
+    });
+    assert.equal(nonIterableSubscription, undefined);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(
+      errors,
+      [],
+      "partial v2 capability detection must not emit terminal errors"
+    );
+  } finally {
+    console.error = originalError;
+  }
+});
