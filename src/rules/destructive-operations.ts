@@ -4,7 +4,7 @@ import type {
   RuleResult,
   TurnInspectionContext,
 } from "../types.js";
-import { isDestructiveCommand } from "../evidence.js";
+import { gitCleanInvocation, isDestructiveCommand } from "../evidence.js";
 
 function latestHumanRequest(context: TurnInspectionContext): string {
   const user = context.currentTurn.findLast(
@@ -39,16 +39,34 @@ function explicitlyAuthorized(request: string, command: string): boolean {
     );
   }
 
-  if (/\bgit\s+clean\b/i.test(command)) {
-    // An explicit git-clean request authorizes normal untracked-file cleanup,
-    // but does not implicitly authorize deleting ignored files (-x / -X).
+  const cleanInvocation = gitCleanInvocation(command);
+  if (cleanInvocation) {
+    // A scoped git invocation (-C / -c) must appear explicitly in the
+    // user's request. Permission for the current repo is not permission to
+    // clean an unrelated directory.
+    const scoped = /\bgit\s+-/.test(cleanInvocation);
+    if (scoped && !request.includes(cleanInvocation.toLowerCase())) {
+      return false;
+    }
+    const cleanRequest = scoped
+      ? request.replace(cleanInvocation.toLowerCase(), "git clean")
+      : request;
+
+    // The host already executed this tool by the time Guardian inspects it.
+    // Unknown shell expansions and chained commands must not be recorded as
+    // explicitly authorized; the default rule severity remains advisory.
     if (
-      // Do not let authorization for git clean cover another command chained
-      // into the same shell invocation.
-      /[;&|\n]/.test(command) ||
-      !/\bgit\s+clean\b/i.test(request) ||
-      /\b(?:do\s+not|don't|dont|never|avoid|without)\s+(?:run\s+|execute\s+|use\s+)?git\s+clean\b/i.test(request) ||
-      /\bgit\s+clean\b[^.!?\n]{0,30}\b(?:yapma|yapmayın|çalıştırma|çalıştırmayın|istemiyorum)\b/iu.test(request)
+      /[;&|\n`]/.test(command) ||
+      /\$(?:\(|\{|[A-Za-z_])|<\(|>\(/.test(command) ||
+      !gitCleanInvocation(cleanRequest) ||
+      /\b(?:do\s+not|don't|dont|never|avoid|without)\s+(?:(?:run|running|execute|executing|use|using)\s+)?git\s+clean\b/i.test(cleanRequest) ||
+      /\b(?:instead\s+of|rather\s+than)\s+(?:(?:running|using)\s+)?git\s+clean\b/i.test(cleanRequest) ||
+      /\bgit\s+clean\b[^.!?\n]{0,60}\b(?:yapma|yapmayın|kullanma|kullanmayın|uygulama|uygulamayın|çalıştırma|çalıştırmayın|çalıştırmamalısın|istemiyorum|yerine)\b/iu.test(cleanRequest) ||
+      !(
+        /\b(?:run|execute|use|apply)\s+(?:the\s+)?git\s+clean\b/i.test(cleanRequest) ||
+        /\bgit\s+clean\b[^.!?\n]{0,80}\b(?:yap|yapın|uygula|uygulayın|çalıştır|çalıştırın|kullan|kullanın)\b/iu.test(cleanRequest) ||
+        request.trim() === command.trim().toLowerCase()
+      )
     ) {
       return false;
     }

@@ -3417,3 +3417,95 @@ test("safety/destructive-operations does not broaden or fabricate git clean auth
     assert.equal(result.findings.length, 1, request + ": " + command);
   }
 });
+
+
+test("safety/destructive-operations rejects shell substitutions hidden inside authorized git clean", () => {
+  const nested = "rm" + " -" + "rf .";
+  for (const command of [
+    "git clean -fd $(" + nested + ")",
+    "git clean -fd " + String.fromCharCode(96) + nested + String.fromCharCode(96),
+    "git clean -fd ${FLAGS}",
+    "git clean -fd $FLAGS",
+    "git clean -fd <(echo data)",
+  ]) {
+    const context = makeEvidenceContext([{
+      type: "tool",
+      tool: "bash",
+      state: { status: "completed", input: { command }, metadata: { exit: 0 } },
+    }]);
+    context.currentTurn[0].parts[0].text = "git clean -fd yap";
+    const result = destructiveOperationsRule.inspect(context);
+    assert.equal(result.decision, "block", command);
+  }
+});
+
+test("safety/destructive-operations distinguishes explicit git clean consent from prohibition or discussion", () => {
+  for (const request of [
+    "git clean -fd kullanma",
+    "git clean -fd yerine git status çalıştır",
+    "Please use git status instead of git clean.",
+    "What does git clean -fd do?",
+    "git clean -fd --help",
+  ]) {
+    const context = makeEvidenceContext([{
+      type: "tool",
+      tool: "bash",
+      state: { status: "completed", input: { command: "git clean -fd" }, metadata: { exit: 0 } },
+    }]);
+    context.currentTurn[0].parts[0].text = request;
+    assert.equal(destructiveOperationsRule.inspect(context).decision, "block", request);
+  }
+
+  for (const request of ["git clean -fd", "git clean -fd yap", "Please run git clean -fd"]) {
+    const context = makeEvidenceContext([{
+      type: "tool",
+      tool: "bash",
+      state: { status: "completed", input: { command: "git clean -fd" }, metadata: { exit: 0 } },
+    }]);
+    context.currentTurn[0].parts[0].text = request;
+    assert.equal(destructiveOperationsRule.inspect(context).decision, "pass", request);
+  }
+});
+
+test("safety/destructive-operations recognizes scoped git clean and requires scope-specific consent", () => {
+  const commands = ["git -C other-repo clean -fd", "git -c core.quotepath=false clean -fd"];
+  for (const command of commands) {
+    const context = makeEvidenceContext([{
+      type: "tool",
+      tool: "bash",
+      state: { status: "completed", input: { command }, metadata: { exit: 0 } },
+    }]);
+    assert.ok(context.evidence.records.some((r) => r.kind === "destructive-operation"));
+
+    context.currentTurn[0].parts[0].text = "git clean -fd yap";
+    assert.equal(destructiveOperationsRule.inspect(context).decision, "block", command);
+
+    context.currentTurn[0].parts[0].text = command + " yap";
+    assert.equal(destructiveOperationsRule.inspect(context).decision, "pass", command);
+  }
+});
+
+test("safety/destructive-operations does not flag git clean dry-runs as destructive", () => {
+  for (const command of [
+    "git clean -nfd",
+    "git clean -fdn",
+    "git clean -f -d --dry-run",
+    "git -C other-repo clean --dry-run --force",
+  ]) {
+    const context = makeEvidenceContext([{
+      type: "tool",
+      tool: "bash",
+      state: { status: "completed", input: { command }, metadata: { exit: 0 } },
+    }]);
+    assert.ok(!context.evidence.records.some((r) => r.kind === "destructive-operation"), command);
+    assert.equal(destructiveOperationsRule.inspect(context).decision, "pass", command);
+  }
+  const chained = "git clean -nfd && git clean -fd";
+  const context = makeEvidenceContext([{
+    type: "tool",
+    tool: "bash",
+    state: { status: "completed", input: { command: chained }, metadata: { exit: 0 } },
+  }]);
+  assert.ok(context.evidence.records.some((r) => r.kind === "destructive-operation"));
+  assert.equal(destructiveOperationsRule.inspect(context).decision, "block");
+});

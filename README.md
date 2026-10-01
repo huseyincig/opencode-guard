@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OpenCode: v1 & v2](https://img.shields.io/badge/OpenCode-v1%20%26%20v2%20Compatible-blue.svg)](https://github.com/huseyincig/opencode-guardian)
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
-[![Tests: 100% Pass](https://img.shields.io/badge/Tests-123%2F123%20Passing-brightgreen.svg)](tests/)
+[![Tests: 100% Pass](https://img.shields.io/badge/Tests-127%2F127%20Passing-brightgreen.svg)](tests/)
 
 A universal, high-performance quality and safety guardian plugin for **OpenCode** AI agents.
 
@@ -107,7 +107,7 @@ Use the absolute `file:///` path in the matching host configuration.
 
 `*` These rules distinguish high-confidence blocking behavior from lower-confidence advisory findings.
 
-For `git clean`, an explicit request authorizes normal cleanup. Deleting ignored files with `-x` or `-X` requires separate explicit authorization. Destructive-operation findings are advisory at the default `warn` severity; Guardian inspects after the tool runs.
+For `git clean`, an explicit request authorizes normal cleanup; mentioning the command, forbidding it, or requesting a different command does not. Deleting ignored files with `-x` or `-X` requires separate authorization. A scoped `git -C ... clean` requires matching scope in the request, and shell substitutions or chained commands are not treated as authorized. Dry-run (`-n` / `--dry-run`) is not classified as destructive. **Guardian inspects after the tool runs:** findings are advisory at the default `warn` severity, not a pre-execution safety barrier.
 
 ---
 
@@ -193,7 +193,7 @@ flowchart TD
 ## 🧪 Testing & Verification
 
 ```bash
-# Build + 123 unit/regression tests
+# Build + 127 unit/regression tests
 npm test
 
 # Typecheck TypeScript sources
@@ -234,7 +234,7 @@ opencode-guardian/
 │   ├── smoke-test.mjs
 │   └── comprehensive-test.mjs
 ├── tests/
-│   └── guard.test.mjs       # 123 unit/regression tests
+│   └── guard.test.mjs       # 127 unit/regression tests
 ├── index.js
 ├── server.js
 ├── package.json

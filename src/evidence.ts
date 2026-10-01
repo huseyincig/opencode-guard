@@ -230,10 +230,39 @@ function isRecursiveForceRemove(command: string): boolean {
   });
 }
 
+const GIT_CLEAN_INVOCATION =
+  /\bgit(?:\s+(?:-C|-c)\s+(?:"[^"]*"|'[^']*'|[^\s;&|\n]+))*\s+clean\b/i;
+
+export function gitCleanInvocation(command: string): string | undefined {
+  return GIT_CLEAN_INVOCATION.exec(command)?.[0];
+}
+
+function isDestructiveGitClean(command: string): boolean {
+  // Each shell segment is checked independently: an initial dry-run does not
+  // make a later destructive clean safe, and a dry-run alone is not destructive.
+  return command.split(/[;&|\n]/).some((segment) => {
+    const invocation = GIT_CLEAN_INVOCATION.exec(segment);
+    if (!invocation) return false;
+
+    const argumentsText = segment.slice(invocation.index + invocation[0].length);
+    const flags = [
+      ...argumentsText.matchAll(/(?:^|\s)(--[a-z-]+|-[a-z]+)(?=\s|$)/gi),
+    ].map((match) => match[1].toLowerCase());
+
+    const isDryRun = flags.some(
+      (flag) => flag === "--dry-run" || /^-[a-z]*n/.test(flag)
+    );
+    const hasForce = flags.some(
+      (flag) => flag === "--force" || /^-[a-z]*f/.test(flag)
+    );
+    return hasForce && !isDryRun;
+  });
+}
+
 export function isDestructiveCommand(command: string): boolean {
   return (
     /\bgit\s+reset\s+--hard\b/i.test(command) ||
-    /\bgit\s+clean\b[^\n;&|]*(?:-[a-z]*f[a-z]*|--force)(?=\s|$|[;&|])/i.test(command) ||
+    isDestructiveGitClean(command) ||
     /\bgit\s+push\b[^\n;&|]*(?:--force(?:-with-lease)?|\s-f(?:\s|$))/i.test(command) ||
     isRecursiveForceRemove(command) ||
     /\b(?:drop\s+(?:database|schema|table)|truncate\s+table)\b/i.test(command) ||
