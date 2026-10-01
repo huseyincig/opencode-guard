@@ -4,7 +4,8 @@ import type {
   RuleResult,
   TurnInspectionContext,
 } from "../types.js";
-import { gitCleanInvocation, isDestructiveCommand } from "../evidence.js";
+import { gitCleanInvocation, isDestructiveCommand, isOpaqueShellExecution } from "../evidence.js";
+import { hasFindDeletion } from "../shell-risk.js";
 
 function latestHumanRequest(context: TurnInspectionContext): string {
   const user = context.currentTurn.findLast(
@@ -26,6 +27,10 @@ function explicitlyAuthorized(request: string, command: string): boolean {
   const negative =
     /\b(?:do\s+not|don't|dont|never|avoid|without)\s+(?:delete|remove|destroy|drop|wipe|reset|force\s+push|clean|unpublish)\b|\b(?:silme|silmeyin|silmeden|kaldırma|kaldırmayın|yok\s+etme|sıfırlama|resetleme|zorla\s+push\s+yapma)\b/iu;
   if (negative.test(request)) return false;
+
+  // Exact, literal find deletion may be authorized; broad "delete" wording
+  // cannot authorize a different target or a rewritten shell command.
+  if (hasFindDeletion(command)) return request.trim() === command.trim().toLowerCase();
 
   if (/\bgit\s+push\b/i.test(command)) {
     return /\b(?:force\s+push|zorla\s+push|--force|force-with-lease)\b/iu.test(
@@ -161,16 +166,20 @@ export const destructiveOperationsRule: GuardRule = {
                 ? input.script
                 : "";
 
-        if (!command || !isDestructiveCommand(command)) continue;
-        if (explicitlyAuthorized(request, command)) continue;
+        if (!command) continue;
+        const destructive = isDestructiveCommand(command);
+        const opaque = isOpaqueShellExecution(command);
+        if (!destructive && !opaque) continue;
+        if (destructive && !opaque && explicitlyAuthorized(request, command)) continue;
 
         findings.push({
           ruleId: "safety/destructive-operations",
-          pattern: "destructive command",
+          pattern: destructive ? "destructive command" : "opaque shell execution",
           messageSnippet: command.replace(/\s+/g, " ").slice(0, 240),
-          description:
-            "Destructive operation was attempted without matching explicit user authorization in the current turn",
-          confidence: "high",
+          description: destructive
+            ? "A destructive operation was detected without matching explicit authorization in the current turn."
+            : "A decoded script was passed to a shell; its effects cannot be determined from the visible command.",
+          confidence: destructive ? "high" : "medium",
         });
       }
     }
@@ -192,8 +201,8 @@ export const destructiveOperationsRule: GuardRule = {
       decision: "block",
       findings,
       remediationPrompt:
-        `Destructive operation detected without explicit user authorization:\n${list}\n\n` +
-        `Do not perform destructive repository, filesystem, package-registry, database, or infrastructure actions unless the user clearly requested that action. Prefer a non-destructive inspection or ask for confirmation.`,
+        `Destructive or opaque shell activity needs review:\n${list}\n\n` +
+        `Do not perform destructive repository, filesystem, package-registry, database, or infrastructure actions without explicit authorization. A decoded shell payload cannot be certified safe from the visible command; inspect it before running, use a constrained environment, or request confirmation.`,
     };
   },
 };

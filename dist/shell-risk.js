@@ -1,0 +1,154 @@
+/**
+ * Conservative shell-pattern inspection, not an interpreter or a permission
+ * boundary. Recognize common literal shell rewrites without executing input.
+ */
+/**
+ * Split only on top-level shell separators. Quoted examples and separators
+ * inside command substitutions must not become independently executed stages.
+ */
+export function splitShellStages(command) {
+    const groups = [];
+    let pipeline = [];
+    let segment = "";
+    let quote = null;
+    let substitutionDepth = 0;
+    const pushStage = () => {
+        if (segment.trim())
+            pipeline.push(segment.trim());
+        segment = "";
+    };
+    const pushPipeline = () => {
+        pushStage();
+        if (pipeline.length)
+            groups.push(pipeline);
+        pipeline = [];
+    };
+    for (let i = 0; i < command.length; i++) {
+        const ch = command[i];
+        if (ch === "\\" && quote !== "'") {
+            segment += ch + (command[++i] ?? "");
+            continue;
+        }
+        if (ch === "'" && quote !== '"') {
+            quote = quote === "'" ? null : "'";
+        }
+        else if (ch === '"' && quote !== "'") {
+            quote = quote === '"' ? null : '"';
+        }
+        if (ch === "$" && command[i + 1] === "(" && quote !== "'") {
+            substitutionDepth++;
+            segment += "$(";
+            i++;
+            continue;
+        }
+        if (substitutionDepth && quote !== "'") {
+            if (ch === "(")
+                substitutionDepth++;
+            if (ch === ")")
+                substitutionDepth--;
+        }
+        if (!quote && !substitutionDepth) {
+            if (ch === "|" && command[i + 1] !== "|") {
+                pushStage();
+                continue;
+            }
+            if (ch === ";" || ch === "\n" || ch === "&" || (ch === "|" && command[i + 1] === "|")) {
+                pushPipeline();
+                if ((ch === "&" || ch === "|") && command[i + 1] === ch)
+                    i++;
+                continue;
+            }
+        }
+        segment += ch;
+    }
+    pushPipeline();
+    return groups;
+}
+export function shellCommandVariants(command) {
+    return splitShellStages(command).flatMap((stages) => stages.flatMap((stage) => {
+        const canonical = stage
+            // Empty quote pairs and escaped command letters disappear in the shell.
+            .replace(/(?<!\\)(?:''|"")/g, "")
+            .replace(/\\([A-Za-z])/g, "$1")
+            // A literal IFS expansion can separate shell arguments.
+            .replace(/\$\{IFS\}|\$IFS(?=[^A-Za-z0-9_]|$)/g, " ")
+            // Only resolve a known literal command name, not arbitrary substitutions.
+            .replace(/\$\(\s*(?:echo|printf(?:\s+%s)?)\s+(?:(["'])rm\1|rm)\s*\)/gi, "rm");
+        return canonical === stage ? [stage] : [stage, canonical];
+    }));
+}
+/** Only active $(...) expressions; text inside single quotes is inert. */
+export function activeCommandSubstitutions(command) {
+    const found = [];
+    let quote = null;
+    for (let i = 0; i < command.length; i++) {
+        const ch = command[i];
+        if (ch === "\\" && quote !== "'") {
+            i++;
+            continue;
+        }
+        if (ch === "'" && quote !== '"') {
+            quote = quote === "'" ? null : "'";
+            continue;
+        }
+        if (ch === '"' && quote !== "'") {
+            quote = quote === '"' ? null : '"';
+            continue;
+        }
+        if (quote === "'" || ch !== "$" || command[i + 1] !== "(")
+            continue;
+        const start = i + 2;
+        let depth = 1;
+        let nestedQuote = null;
+        let end = start;
+        for (; end < command.length; end++) {
+            const next = command[end];
+            if (next === "\\" && nestedQuote !== "'") {
+                end++;
+                continue;
+            }
+            if (next === "'" && nestedQuote !== '"') {
+                nestedQuote = nestedQuote === "'" ? null : "'";
+                continue;
+            }
+            if (next === '"' && nestedQuote !== "'") {
+                nestedQuote = nestedQuote === '"' ? null : '"';
+                continue;
+            }
+            if (nestedQuote)
+                continue;
+            if (next === "(")
+                depth++;
+            if (next === ")" && --depth === 0)
+                break;
+        }
+        if (depth === 0) {
+            found.push(command.slice(start, end));
+            i = end;
+        }
+    }
+    return found;
+}
+/** Literal script passed to a shell; dynamic scripts are not decoded here. */
+export function literalShellScripts(command) {
+    const scripts = [];
+    const pattern = /^\s*(?:env\s+)?(?:sh|bash|zsh|dash)\s+-c\s+(["'])([^"'\n]+)\1/;
+    for (const stage of splitShellStages(command).flat()) {
+        const match = pattern.exec(stage);
+        if (match)
+            scripts.push(match[2]);
+    }
+    return scripts;
+}
+/** Find's deletion actions do not require the rm binary to run directly. */
+export function hasFindDeletion(command) {
+    return splitShellStages(command).flat().some((stage) => /^\s*(?:sudo\s+)?find\b[^\n;&|]*\s(?:-delete\b|-exec(?:dir)?\s+(?:sudo\s+)?(?:rm|unlink)\b)/i.test(stage));
+}
+/**
+ * Decoding into a shell conceals the executed script. This is a warning
+ * signal only: it does not prove that the decoded payload is destructive.
+ */
+export function isOpaqueShellExecution(command) {
+    return splitShellStages(command).some((stages) => stages.some((stage, index) => /^\s*(?:env\s+)?(?:openssl\s+)?base64\s+(?:-[dD]\b|--decode\b)/i.test(stage) &&
+        /^\s*(?:env\s+)?(?:sh|bash|zsh|dash)(?=\s|$)/i.test(stages[index + 1] ?? "")));
+}

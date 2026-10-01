@@ -1,4 +1,6 @@
 import { extractLikelyShellMutation } from "./tool-input.js";
+import { activeCommandSubstitutions, hasFindDeletion, literalShellScripts, shellCommandVariants, splitShellStages } from "./shell-risk.js";
+export { isOpaqueShellExecution } from "./shell-risk.js";
 function stringify(value) {
     if (typeof value === "string")
         return value;
@@ -175,7 +177,7 @@ export function isVerificationFailureMask(command) {
     return /(?:\|\|\s*(?:true\b|:(?=\s|$)|exit\s+0\b)|;\s*exit\s+0\b)/i.test(command);
 }
 function isRecursiveForceRemove(command) {
-    const candidates = command.match(/(?:^|[;&|]\s*)(?:sudo\s+)?rm\s+[^\n;&|]+/gi) ?? [];
+    const candidates = command.match(/^\s*(?:sudo\s+)?rm\s+[^\n;&|]+/gi) ?? [];
     return candidates.some((candidate) => {
         const flags = candidate.match(/(?:^|\s)-[a-z]+\b|--(?:recursive|force)\b/gi) ?? [];
         const recursive = flags.some((flag) => /--recursive|^-[a-z]*r/i.test(flag.trim()));
@@ -190,7 +192,9 @@ export function gitCleanInvocation(command) {
 function isDestructiveGitClean(command) {
     // Each shell segment is checked independently: an initial dry-run does not
     // make a later destructive clean safe, and a dry-run alone is not destructive.
-    return command.split(/[;&|\n]/).some((segment) => {
+    return splitShellStages(command).flat().some((segment) => {
+        if (!/^\s*(?:sudo\s+)?git\b/i.test(segment))
+            return false;
         const invocation = GIT_CLEAN_INVOCATION.exec(segment);
         if (!invocation)
             return false;
@@ -203,10 +207,10 @@ function isDestructiveGitClean(command) {
         return hasForce && !isDryRun;
     });
 }
-export function isDestructiveCommand(command) {
-    return (/\bgit\s+reset\s+--hard\b/i.test(command) ||
+function isLegacyDestructiveCommand(command) {
+    return (/^\s*(?:sudo\s+)?git\s+reset\s+--hard\b/i.test(command) ||
         isDestructiveGitClean(command) ||
-        /\bgit\s+push\b[^\n;&|]*(?:--force(?:-with-lease)?|\s-f(?:\s|$))/i.test(command) ||
+        /^\s*(?:sudo\s+)?git\s+push\b[^\n;&|]*(?:--force(?:-with-lease)?|\s-f(?:\s|$))/i.test(command) ||
         isRecursiveForceRemove(command) ||
         /\b(?:drop\s+(?:database|schema|table)|truncate\s+table)\b/i.test(command) ||
         /\bterraform\s+destroy\b/i.test(command) ||
@@ -214,6 +218,34 @@ export function isDestructiveCommand(command) {
         /\bdocker\s+system\s+prune\b[^\n;&|]*(?:-a\b|--all\b)/i.test(command) ||
         /\bnpm\s+unpublish\b/i.test(command) ||
         /\bgh\s+repo\s+delete\b/i.test(command));
+}
+/**
+ * Detect literal destructive shell actions, including common shell rewrites.
+ * Post-execution classification cannot serve as a pre-execution safety gate.
+ */
+export function isDestructiveCommand(command, depth = 0) {
+    if (shellCommandVariants(command).some((candidate) => isLegacyDestructiveCommand(candidate) || hasFindDeletion(candidate)))
+        return true;
+    if (depth >= 4)
+        return false;
+    return [
+        ...activeCommandSubstitutions(command),
+        ...literalShellScripts(command),
+    ].some((nested) => isDestructiveCommand(nested, depth + 1));
+}
+/** Include recognized hidden deletions when ordering review/test evidence. */
+function isLikelyShellFileDeletion(command, depth = 0) {
+    if (shellCommandVariants(command).some((candidate) => /^\s*(?:sudo\s+)?(?:rm|unlink|trash)(?=\s|$)(?!\s+--(?:help|version)\b)/i.test(candidate) ||
+        /^\s*(?:sudo\s+)?git\s+reset\s+--hard\b/i.test(candidate) ||
+        isDestructiveGitClean(candidate) ||
+        hasFindDeletion(candidate)))
+        return true;
+    if (depth >= 4)
+        return false;
+    return [
+        ...activeCommandSubstitutions(command),
+        ...literalShellScripts(command),
+    ].some((nested) => isLikelyShellFileDeletion(nested, depth + 1));
 }
 function hasFileMutation(part) {
     const input = part.state?.input;
@@ -223,11 +255,8 @@ function hasFileMutation(part) {
     if (action === "delete" || action === "remove")
         return true;
     const command = commandFromPart(part);
-    if (/(?:^|[;&|\n]\s*)(?:sudo\s+)?(?:rm|unlink|trash)\s+(?!--help\b|--version\b)/i.test(command) ||
-        /\bgit\s+reset\s+--hard\b/i.test(command) ||
-        isDestructiveGitClean(command)) {
+    if (isLikelyShellFileDeletion(command))
         return true;
-    }
     if (["content", "new_string", "newString", "patch", "patchText"].some((key) => typeof input[key] === "string" && input[key].length > 0)) {
         return true;
     }
