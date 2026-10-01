@@ -99,8 +99,7 @@ export const noApologyRule = {
                         : `${pattern.regex.flags}g`);
                     let match;
                     while ((match = regex.exec(cleanText)) !== null) {
-                        if (/^sorry\b/i.test(match[0].trim()) &&
-                            isReportedApologyToken(cleanText, match.index)) {
+                        if (isReportedApologyToken(cleanText, match.index)) {
                             continue;
                         }
                         seenPatterns.add(pattern.name);

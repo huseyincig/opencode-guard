@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OpenCode: v1 & v2](https://img.shields.io/badge/OpenCode-v1%20%26%20v2%20Compatible-blue.svg)](https://github.com/huseyincig/opencode-guardian)
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
-[![Tests: 100% Pass](https://img.shields.io/badge/Tests-267%2F267%20Passing-brightgreen.svg)](tests/)
+[![Tests: 100% Pass](https://img.shields.io/badge/Tests-279%2F279%20Passing-brightgreen.svg)](tests/)
 
 A universal, high-performance quality and safety guardian plugin for **OpenCode** AI agents.
 
@@ -102,7 +102,7 @@ Use the absolute `file:///` path in the matching host configuration.
 | **`safety/destructive-operations`** | **warn** | Hard reset, force push, recursive force delete, database drop, Terraform destroy, registry unpublish, and similar operations unless explicitly requested by the user. |
 | **`testing/no-cheat`** | error | Targeted skip/focus/todo edits block. Existing skips in whole-file writes, assertion weakening, test deletion, coverage reduction, CI test-step removal, and snapshot regeneration are advisory by default unless strict settings or failed-test evidence require blocking. |
 | **`security/no-secrets`** | error | OpenAI/GitHub/AWS/Slack/npm/GitLab/Google/Stripe credentials, JWTs, private keys, registry auth, bearer tokens, and credential-bearing DB URLs. |
-| **`manifest/no-ghost-deps`** | error | Undeclared imports against the nearest Node (`package.json`), Python (`pyproject.toml` / `requirements*.txt`), Go (`go.mod`), or Rust (`Cargo.toml`) manifest. Python findings are advisory by default because import names can differ from package names. |
+| **`manifest/no-ghost-deps`** | error | Undeclared imports against the nearest Node (`package.json`), Python (`pyproject.toml` / `requirements*.txt`), Go (`go.mod`), or Rust (`Cargo.toml`) manifest. Python findings are advisory by default because import names can differ from package names. Python lookup recognizes local PEP 420 namespace directories, PEP 508 extras, and explicit `#egg=` distribution names in legacy VCS requirements; unnamed URLs never imply a package name. |
 | **`runtime/circuit-breaker`** | error | Exact repeated failures plus cosmetic command variants that keep hitting the same normalized root-cause error without successful progress. |
 | **`task/instruction-fidelity`** | error | A current, explicit action is refused solely because the user previously deferred or paused the work. Questions and negative instructions do not count as authorization. |
 | **`task/completion-gate`** | error* | Explicit repeated-review and requested verification requirements. A fix without a subsequent required review can trigger bounded continuation; missing verification evidence is advisory unless an observed failure contradicts completion. |
@@ -228,7 +228,7 @@ flowchart TD
 ## 🧪 Testing & Verification
 
 ```bash
-# Build + 267 unit/regression tests
+# Build + 279 unit/regression tests
 npm test
 
 # Typecheck TypeScript sources

@@ -155,16 +155,24 @@ function loadNodeDependencies(directory: string): Set<string> | null {
 }
 
 function parseRequirementName(line: string): string {
-  const trimmed = line.split("#", 1)[0].trim();
-  if (
-    !trimmed ||
-    trimmed.startsWith("-") ||
-    /^https?:\/\//i.test(trimmed)
-  ) {
-    return "";
+  let trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#")) return "";
+
+  const editable = /^(?:-e|--editable)(?:\s+|=)/i.exec(trimmed);
+  if (editable) trimmed = trimmed.slice(editable[0].length).trim();
+  if (!trimmed || trimmed.startsWith("-")) return "";
+
+  if (/^(?:(?:git|hg|svn|bzr)\+|(?:https?|file|ssh):\/\/)/i.test(trimmed)) {
+    // Legacy pip VCS requirements may declare the actual distribution with
+    // #egg=package. A URL without a usable name must not invent a dependency
+    // called "git", "file", "ssh", etc.
+    const fragment = trimmed.split("#", 2)[1] ?? "";
+    const egg = /(?:^|&)egg=([A-Za-z0-9_.-]+)(?=[&\s]|$)/i.exec(fragment)?.[1];
+    return egg ? normalizePackageName(egg) : "";
   }
 
-  const match = /^([A-Za-z0-9_.-]+)/.exec(trimmed);
+  if (editable) return "";
+  const match = /^([A-Za-z0-9_.-]+)/.exec(trimmed.split("#", 1)[0].trim());
   return match ? normalizePackageName(match[1]) : "";
 }
 
@@ -211,6 +219,43 @@ function parseRequirementsFile(
   return deps;
 }
 
+/**
+ * Parse a TOML string array without confusing brackets in quoted PEP 508
+ * extras (for example fastapi[all]) with the array's closing bracket.
+ * An incomplete array provides no authoritative dependency evidence.
+ */
+function readTomlDependencyArray(text: string, start: number): string[] {
+  const entries: string[] = [];
+  let quote: "'" | '"' | null = null;
+  let value = "";
+
+  for (let index = start; index < text.length; index++) {
+    const char = text[index];
+    if (quote) {
+      if (quote === '"' && char === "\\" && index + 1 < text.length) {
+        value += text[++index];
+      } else if (char === quote) {
+        entries.push(value);
+        value = "";
+        quote = null;
+      } else {
+        value += char;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === "#") {
+      while (index < text.length && text[index] !== "\n") index++;
+    } else if (char === "]") {
+      return entries;
+    }
+  }
+
+  return [];
+}
+
 function parsePythonManifest(text: string, fileName: string): Set<string> {
   const deps = new Set<string>();
 
@@ -222,12 +267,13 @@ function parsePythonManifest(text: string, fileName: string): Set<string> {
     return deps;
   }
 
-  // PEP 621 / uv style arrays: dependencies = ["requests>=2", ...]
+  // PEP 621 / uv style arrays, including extras such as "fastapi[all]".
   for (const arrayMatch of text.matchAll(
-    /(?:^|\n)\s*(?:dependencies|dev-dependencies)\s*=\s*\[([\s\S]*?)\]/g
+    /(?:^|\n)\s*(?:dependencies|dev-dependencies)\s*=\s*\[/g
   )) {
-    for (const quoteMatch of arrayMatch[1].matchAll(/["']([^"']+)["']/g)) {
-      const name = parseRequirementName(quoteMatch[1]);
+    const start = (arrayMatch.index ?? 0) + arrayMatch[0].length;
+    for (const requirement of readTomlDependencyArray(text, start)) {
+      const name = parseRequirementName(requirement);
       if (name) deps.add(name);
     }
   }
@@ -402,8 +448,8 @@ function getNodePackageName(importPath: string): string {
 }
 
 const JS_IMPORT_REGEXES = [
-  /\bimport\s+(?:[\w*\s{},]+from\s+)?["']([^"']+)["']/g,
-  /\bexport\s+[\w*\s{},]+from\s+["']([^"']+)["']/g,
+  /\bimport\s+(?:[\w*$\s{},]+from\s+)?["']([^"']+)["']/g,
+  /\bexport\s+[\w*$\s{},]+from\s+["']([^"']+)["']/g,
   /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
   /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
 ];
@@ -586,12 +632,24 @@ function extractRustCrates(code: string): string[] {
 }
 
 function localPythonModuleExists(root: string, moduleName: string): boolean {
-  return [
+  if ([
     path.join(root, `${moduleName}.py`),
     path.join(root, moduleName, "__init__.py"),
     path.join(root, "src", `${moduleName}.py`),
     path.join(root, "src", moduleName, "__init__.py"),
-  ].some((candidate) => fs.existsSync(candidate));
+  ].some((candidate) => fs.existsSync(candidate))) {
+    return true;
+  }
+
+  // PEP 420 namespace packages are importable without __init__.py.
+  return [path.join(root, moduleName), path.join(root, "src", moduleName)]
+    .some((candidate) => {
+      try {
+        return fs.statSync(candidate).isDirectory();
+      } catch {
+        return false;
+      }
+    });
 }
 
 function localRustModuleExists(root: string, crateName: string): boolean {
@@ -718,12 +776,7 @@ export const noGhostDepsRule: GuardRule = {
           const pkg = normalizePackageName(mapped);
           const declaredByName =
             manifest.deps.has(pkg) ||
-            [...manifest.deps].some(
-              (declared) =>
-                declared === normalizePackageName(moduleName) ||
-                declared.endsWith(`-${normalizePackageName(moduleName)}`) ||
-                declared.startsWith(`${normalizePackageName(moduleName)}-`)
-            );
+            manifest.deps.has(normalizePackageName(moduleName));
           if (declaredByName) continue;
 
           addFinding(

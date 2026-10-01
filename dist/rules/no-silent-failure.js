@@ -11,7 +11,7 @@ const EMPTY_HANDLER_PATTERNS = [
     },
     {
         name: "Python except: pass",
-        regex: /\bexcept(?:\s+(?:Exception|BaseException)(?:\s+as\s+\w+)?)?\s*:\s*(?:#[^\n]*\n\s*)*pass\b/m,
+        regex: /\bexcept(?:\s+(?:\([^\n)]+\)|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?:\s+as\s+[A-Za-z_]\w*)?)?\s*:\s*(?:#[^\n]*\n\s*)*pass\b/m,
     },
 ];
 const MASKED_VERIFICATION = /\b(?:npm|pnpm|yarn|bun)\s+(?:(?:run\s+)?(?:test|build|lint|typecheck)|audit)\b|\b(?:pytest|py\.test|go\s+test|cargo\s+(?:test|build|clippy|audit)|node\s+--test|jest|vitest|tsc\b[^\n;&|]*--noEmit|mypy|pyright|eslint|ruff|flake8|pip-audit|govulncheck)\b/i;

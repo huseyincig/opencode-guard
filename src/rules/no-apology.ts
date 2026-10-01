@@ -122,7 +122,6 @@ export const noApologyRule: GuardRule = {
           let match: RegExpExecArray | null;
           while ((match = regex.exec(cleanText)) !== null) {
             if (
-              /^sorry\b/i.test(match[0].trim()) &&
               isReportedApologyToken(cleanText, match.index)
             ) {
               continue;

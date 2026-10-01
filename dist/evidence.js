@@ -219,6 +219,15 @@ function hasFileMutation(part) {
     const input = part.state?.input;
     if (!input)
         return false;
+    const action = typeof input.action === "string" ? input.action.toLowerCase() : "";
+    if (action === "delete" || action === "remove")
+        return true;
+    const command = commandFromPart(part);
+    if (/(?:^|[;&|\n]\s*)(?:sudo\s+)?(?:rm|unlink|trash)\s+(?!--help\b|--version\b)/i.test(command) ||
+        /\bgit\s+reset\s+--hard\b/i.test(command) ||
+        isDestructiveGitClean(command)) {
+        return true;
+    }
     if (["content", "new_string", "newString", "patch", "patchText"].some((key) => typeof input[key] === "string" && input[key].length > 0)) {
         return true;
     }

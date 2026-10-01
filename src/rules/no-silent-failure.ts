@@ -18,7 +18,7 @@ const EMPTY_HANDLER_PATTERNS: Array<{ name: string; regex: RegExp }> = [
   },
   {
     name: "Python except: pass",
-    regex: /\bexcept(?:\s+(?:Exception|BaseException)(?:\s+as\s+\w+)?)?\s*:\s*(?:#[^\n]*\n\s*)*pass\b/m,
+    regex: /\bexcept(?:\s+(?:\([^\n)]+\)|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?:\s+as\s+[A-Za-z_]\w*)?)?\s*:\s*(?:#[^\n]*\n\s*)*pass\b/m,
   },
 ];
 
