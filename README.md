@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OpenCode: v1 & v2](https://img.shields.io/badge/OpenCode-v1%20%26%20v2%20Compatible-blue.svg)](https://github.com/huseyincig/opencode-guardian)
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
-[![Tests: 100% Pass](https://img.shields.io/badge/Tests-314%2F314%20Passing-brightgreen.svg)](tests/)
+[![Tests: 100% Pass](https://img.shields.io/badge/Tests-318%2F318%20Passing-brightgreen.svg)](tests/)
 
 A universal, high-performance quality and safety guardian plugin for **OpenCode** AI agents.
 
@@ -20,7 +20,7 @@ Traditional agent detectors often rely on external platform-specific binaries (R
 **OpenCode Guardian** provides:
 - **Task fidelity:** Captures explicit user requirements before model execution (V1 `chat.message`/system transform; V2 `prompt`/`context` hooks) and checks completion on `session.idle`. Historical deferrals do not override a new explicit instruction.
 - **Zero-Binary, Pure TypeScript:** Native in-memory execution (~0.5ms per inspection) with zero external runtime dependencies.
-- **Dual-Mode Host Support:** Works with **OpenCode 1.x** (via `server`) and full **OpenCode 2.x** hosts (via `setup` and `event.subscribe`); transition builds that invoke `setup()` without the complete V2 capability surface are detected and ignored safely.
+- **Dual-Mode Host Support:** Works with **OpenCode 1.x** (via `server`) and full **OpenCode 2.x** hosts (via `setup` and `event.subscribe`); transition builds that invoke `setup()` without the complete V2 capability surface are tolerated when strict preflight is disabled; when it is explicitly enabled, missing capabilities cause a visible setup error.
 - **Pre-Built Distribution:** Pre-compiled `dist/` is included in the package and git repository — no build toolchain (`tsc`) required on target systems.
 - **Evidence-Aware Inspection:** Correlates tool commands, exit codes, test/build/audit results, file mutations, git state, baseline checks, and normalized error fingerprints before deciding.
 - **False-Positive Defenses:** Explicit uncertainty is allowed, stale verification after a later edit is not treated as proof, and Python local/stdlib modules are distinguished from third-party dependencies.
@@ -113,7 +113,7 @@ For `git clean`, an explicit request authorizes normal cleanup; mentioning the c
 
 GuardFall-inspired detection recognizes selected literal shell rewrites (empty quotes, escaped command letters, literal `$IFS` separation, simple literal substitutions, paired backtick substitutions, nested shell commands), `find -delete` / `find -exec`, and Base64 decoding piped into a shell. Decoded scripts are flagged as **opaque execution**, not proven deletion. This is deliberately limited pattern recognition, **not** a complete shell interpreter: dynamic payloads, arbitrary expansions, different shells, and unobserved side effects may escape detection. Use host-level permissions, confirmation, and filesystem isolation for prevention.
 
-For literal file removals (including plain `rm path`), post-turn authorization is target-specific: permission for one path does not authorize another, a different target in the same command, or an unrequested `sudo` privilege escalation. Quoted examples and questions do not grant permission. Complex shell syntax is not interpreted as authorization; the finding remains advisory under the default `warn` severity.
+For literal file removals (including plain `rm path`), post-turn authorization is target-specific: permission for one path does not authorize another, a different target in the same command, or an unrequested `sudo` privilege escalation. Quoted examples, questions and requests for explanations do not grant permission. Complex shell syntax is not interpreted as authorization; the finding remains advisory under the default `warn` severity.
 
 For the bounded, non-executing [synthetic security benchmark](docs/security-benchmark.md) and its limitations, see the benchmark notes below. For a transparent, evidence-linked coverage and gaps assessment, see [OWASP Agentic Top 10 (2026) mapping](https://github.com/huseyincig/opencode-guardian/blob/main/docs/owasp-agentic-top10-2026.md). This is a scope assessment, not a claim of OWASP certification or complete protection.
 
@@ -171,7 +171,7 @@ To customize behavior, create `opencode-guardian.json` (or legacy `opencode-guar
 
 Set `"preflight": { "enabled": true }` in `opencode-guardian.json` to register a pre-execution shell-tool hook. This is **disabled by default**; the existing `session.idle` checks and `safety/destructive-operations: warn` behavior remain unchanged.
 
-- **V1:** uses `tool.execute.before`. **V2:** uses `ctx.tool.hook("execute.before", ...)`. When a full V2 host cannot register the requested hook, setup fails visibly rather than silently claiming that protection is active.
+- **V1:** uses `tool.execute.before`. **V2:** uses `ctx.tool.hook("execute.before", ...)`. When an explicitly configured strict V2 preflight encounters an incomplete host context, unavailable event subscription or missing tool hook, setup fails visibly rather than silently claiming that protection is active.
 - When enabled, the strict hook rejects recognized destructive shell operations (including plain `rm path`, paired active backtick substitutions and selected GuardFall-inspired literal rewrites) and decoded payloads piped into a shell. Shell-tool calls without an inspectable string command are also rejected. It does not modify tool arguments or invoke shell commands itself.
 - This initial strict mode rejects recognized risks **even when the user has requested the operation**. It has no implicit consent bypass. Leave it disabled when legitimate destructive operations must be authorized through OpenCode's own permission mechanisms.
 - Only recognized shell-execution tool names are inspected. Custom tool names, arbitrary shell expansions, scripts launched by other tools, filesystem writes through non-shell APIs, and other paths may fall outside its detection. This is **not a complete shell parser, a sandbox, or a replacement for host permissions**.
@@ -251,7 +251,7 @@ flowchart TD
 ## 🧪 Testing & Verification
 
 ```bash
-# Build + 314 unit/regression tests
+# Build + 318 unit/regression tests
 npm test
 
 # Typecheck TypeScript sources

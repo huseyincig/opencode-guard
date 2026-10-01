@@ -220,14 +220,20 @@ const server = async ({ client, directory }) => {
     };
 };
 const setup = async (context) => {
-    // OpenCode v1/transition builds may discover the v2-shaped plugin object and
-    // call setup() with a partial context. Treat that as "v2 unavailable" rather
-    // than emitting an initialization error into the TUI.
+    // Transition builds may call setup() with a partial v2 context.
+    // Resolve the explicit security setting first: strict preflight must never
+    // silently disappear merely because another v2 capability is unavailable.
+    const directory = context?.location?.directory ?? process.cwd();
+    const config = loadConfig(directory);
+    const strictPreflight = config.enabled !== false && config.preflight?.enabled === true;
     if (!context ||
         typeof context !== "object" ||
         typeof context.event?.subscribe !== "function" ||
         typeof context.session?.context !== "function" ||
         typeof context.session?.synthetic !== "function") {
+        if (strictPreflight) {
+            throw new Error("[opencode-guardian preflight] V2 host context is unavailable; strict preflight cannot be enabled.");
+        }
         return;
     }
     const controller = new AbortController();
@@ -240,20 +246,24 @@ const setup = async (context) => {
             typeof candidate[Symbol.asyncIterator] !==
                 "function") {
             controller.abort();
+            if (strictPreflight) {
+                throw new Error("[opencode-guardian preflight] V2 event subscription is unavailable; strict preflight cannot be enabled.");
+            }
             return;
         }
         events = candidate;
     }
-    catch {
+    catch (error) {
         controller.abort();
+        if (strictPreflight) {
+            throw new Error("[opencode-guardian preflight] V2 event subscription failed; strict preflight cannot be enabled.", { cause: error });
+        }
         return;
     }
-    const directory = context.location?.directory ?? process.cwd();
-    const config = loadConfig(directory);
     const engine = new GuardEngine(config);
     const contracts = new Map();
     const registrations = [];
-    if (config.enabled !== false && config.preflight?.enabled === true) {
+    if (strictPreflight) {
         // An explicitly requested security hook must never be silently skipped.
         if (typeof context.tool?.hook !== "function") {
             controller.abort();

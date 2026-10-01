@@ -50,8 +50,21 @@ function matchesRequestedTargets(request, command) {
         });
     });
 }
+/** A question about deletion is not permission to perform it.
+ * Permit direct "can/could you delete" requests; treat explanations,
+ * safety questions and Turkish advice questions as discussion. */
+function isDeletionDiscussion(request) {
+    const text = request.trim();
+    const directRequest = /^(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:delete|remove|wipe)\b/i.test(text);
+    if (directRequest)
+        return false;
+    return /^(?:what|why|how|should|may|is|are|do|does|did|would|could|can)\b/i.test(text) ||
+        /^(?:tell|show|explain)\s+me\s+(?:how|why|what)\b/i.test(text) ||
+        /\b(?:nasıl|neden)\b[^\n]*\b(?:sil|silerim|silinir|silmeli|silsem|sileyim)\b/iu.test(text) ||
+        /\b(?:silmeli\s+miyim|silmeli\s+mıyım|silsem\s+mi|sileyim\s+mi)\b/iu.test(text);
+}
 function explicitlyAuthorized(request, command) {
-    if (!request)
+    if (!request || isDeletionDiscussion(request))
         return false;
     const negative = /\b(?:do\s+not|don't|dont|never|avoid|without)\s+(?:delete|remove|destroy|drop|wipe|reset|force\s+push|clean|unpublish)\b|\b(?:silme|silmeyin|silmeden|kaldırma|kaldırmayın|yok\s+etme|sıfırlama|resetleme|zorla\s+push\s+yapma)\b/iu;
     if (negative.test(request))
