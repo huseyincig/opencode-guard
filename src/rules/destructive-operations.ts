@@ -21,6 +21,43 @@ function latestHumanRequest(context: TurnInspectionContext): string {
     .toLowerCase();
 }
 
+function explicitlyAllowedSudo(request: string): boolean {
+  const forbidden = /\b(?:without|no|never|avoid|do\s+not|don\x27t|dont)\s+(?:(?:using|use|running|run)\s+)?sudo\b/i.test(request) ||
+    /\bsudo\b[^.!?\n]{0,40}\b(?:kullanma|kullanmayın|yapma|olmadan)\b/iu.test(request);
+  return /\bsudo\b/i.test(request) && !forbidden;
+}
+
+/** Require literal target matches before treating a scoped deletion as authorized. */
+function matchesRequestedTargets(request: string, command: string): boolean {
+  if (/[;&|\n\x60$<>]/.test(command)) return false;
+  const words = command.trim().toLowerCase().split(/\s+/);
+  if (words[0] === "sudo") {
+    if (!explicitlyAllowedSudo(request)) return false;
+    words.shift();
+  }
+  words.shift();
+  const targets = words.filter((part) => !part.startsWith("-"));
+  if (targets.length === 0) return false;
+
+  return targets.every((target) => {
+    if (!/^[a-z0-9_.\/-]+$/i.test(target)) return false;
+    const variants = [target, target.replace(/^\.\//, "")];
+    return variants.some((literal) => {
+      let pos = -1;
+      while ((pos = request.indexOf(literal, pos + 1)) !== -1) {
+        const before = request[pos - 1];
+        const afterAt = pos + literal.length;
+        const after = request[afterAt];
+        const beforeOK = before === undefined || !/[a-z0-9_./-]/i.test(before);
+        const afterOK = after === undefined || !/[a-z0-9_./-]/i.test(after) ||
+          (after === "." && afterAt + 1 === request.length);
+        if (beforeOK && afterOK) return true;
+      }
+      return false;
+    });
+  });
+}
+
 function explicitlyAuthorized(request: string, command: string): boolean {
   if (!request) return false;
 
@@ -88,6 +125,13 @@ function explicitlyAuthorized(request: string, command: string): boolean {
   }
 
   if (/(?:^|[;&|]\s*)(?:sudo\s+)?rm\b/i.test(command)) {
+    if (/[;&|\n\x60$<>]/.test(command)) return false;
+    if (/^\s*sudo\s+/i.test(command) && !explicitlyAllowedSudo(request)) return false;
+    const direct = request.trim() === command.trim().toLowerCase();
+    const imperative = /^\s*(?:please\s+)?(?:run|execute|çalıştır|çalıştırın)\b/iu.test(request) &&
+      !/\b(?:not|instead\s+of|rather\s+than|never|avoid)\b/iu.test(request) &&
+      request.includes(command.trim().toLowerCase());
+    if (direct || (imperative && matchesRequestedTargets(request, command))) return true;
     const deleteRequested =
       /\b(?:delete|remove|wipe|sil|silin|sileyim|kaldır|kaldırın)\b/iu.test(
         request
@@ -98,7 +142,11 @@ function explicitlyAuthorized(request: string, command: string): boolean {
       /(?:^|\s)(?:\.{1,2}\/?|\/|~\/?|\*|\.\/\*|\.\.\/\*)\s*(?:$|[;&|])/i.test(
         command
       );
-    if (!broadTarget) return true;
+    if (!broadTarget) return matchesRequestedTargets(request, command);
+    const targets = command.trim().toLowerCase().split(/\s+/).filter((token) =>
+      token !== "sudo" && token !== "rm" && !token.startsWith("-")
+    );
+    if (targets.length !== 1) return false;
 
     return (
       /\brm\s+-rf\s+\.\/?(?:\s|$)/i.test(request) ||
