@@ -12,6 +12,8 @@ export interface GuardConfig {
     enabled?: boolean;
     debug?: boolean;
     remediationBudget?: number;
+    /** Separate, bounded continuation budget for explicit iterative tasks (0..5). */
+    iterationBudget?: number;
     rules?: {
         "discipline/no-evasion"?: Severity | GuardRuleConfig;
         "discipline/no-apology"?: Severity | GuardRuleConfig;
@@ -25,6 +27,8 @@ export interface GuardConfig {
         "security/no-secrets"?: Severity | GuardRuleConfig;
         "manifest/no-ghost-deps"?: Severity | GuardRuleConfig;
         "runtime/circuit-breaker"?: Severity | GuardRuleConfig;
+        "task/completion-gate"?: Severity | GuardRuleConfig;
+        "task/instruction-fidelity"?: Severity | GuardRuleConfig;
         [ruleName: string]: Severity | GuardRuleConfig | undefined;
     };
 }

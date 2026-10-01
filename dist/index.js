@@ -1,4 +1,5 @@
 import { GuardEngine, loadConfig } from "./engine.js";
+import { extractTaskContract, taskGuidance } from "./task-contract.js";
 export * from "./types.js";
 export * from "./engine.js";
 export * from "./rules/no-evasion.js";
@@ -15,6 +16,9 @@ export * from "./rules/no-silent-failure.js";
 export * from "./rules/destructive-operations.js";
 export * from "./evidence.js";
 export * from "./state.js";
+export * from "./task-contract.js";
+export * from "./rules/task-completion.js";
+export * from "./rules/instruction-fidelity.js";
 export * from "./prose.js";
 function stringifyV2ToolContent(content) {
     if (!Array.isArray(content))
@@ -143,15 +147,44 @@ async function handleSessionIdle(sessionID, directory, fetchMessages, sendPrompt
 const server = async ({ client, directory }) => {
     const config = loadConfig(directory);
     const engine = new GuardEngine(config);
+    const contracts = new Map();
+    let promptSequence = 0;
     return {
+        "chat.message": async (input, output) => {
+            const text = output.parts
+                .map((part) => part.type === "text" ? part.text : "")
+                .join("\n");
+            if (!text || text.trimStart().startsWith("[opencode-guardian remediation]")) {
+                return;
+            }
+            const contract = extractTaskContract([{
+                    info: { id: input.messageID ?? `v1-prompt-${++promptSequence}`, role: "user" },
+                    parts: [{ type: "text", text }],
+                }]);
+            if (contract)
+                contracts.set(input.sessionID, contract);
+        },
+        "experimental.chat.system.transform": async (input, output) => {
+            if (!input.sessionID)
+                return;
+            const contract = contracts.get(input.sessionID);
+            if (!contract)
+                return;
+            const guidance = taskGuidance(contract);
+            if (guidance && !output.system.includes(guidance)) {
+                output.system.push(guidance);
+            }
+        },
         event: async ({ event }) => {
             const eventData = event;
             if (eventData.type === "session.deleted") {
                 const deletedSessionID = eventData.properties?.sessionID ??
                     eventData.data?.sessionID ??
                     eventData.data?.info?.id;
-                if (deletedSessionID)
+                if (deletedSessionID) {
                     engine.forgetSession(deletedSessionID);
+                    contracts.delete(deletedSessionID);
+                }
                 return;
             }
             if (eventData.type !== "session.idle")
@@ -164,7 +197,11 @@ const server = async ({ client, directory }) => {
                     path: { id: sessionID },
                     query: { directory },
                 });
-                return (Array.isArray(res) ? res : (res?.data ?? []));
+                const messages = (Array.isArray(res) ? res : (res?.data ?? []));
+                const contract = extractTaskContract(messages);
+                if (contract)
+                    contracts.set(sessionID, contract);
+                return messages;
             }, async (text) => {
                 await client.session.promptAsync({
                     path: { id: sessionID },
@@ -207,14 +244,48 @@ const setup = async (context) => {
     const directory = context.location?.directory ?? process.cwd();
     const config = loadConfig(directory);
     const engine = new GuardEngine(config);
+    const contracts = new Map();
+    const registrations = [];
+    if (typeof context.session.hook === "function") {
+        try {
+            registrations.push(await context.session.hook("prompt", (event) => {
+                const text = event.prompt.text;
+                if (!text || text.trimStart().startsWith("[opencode-guardian remediation]")) {
+                    return;
+                }
+                const contract = extractTaskContract([{
+                        info: { id: event.messageID, role: "user" },
+                        parts: [{ type: "text", text }],
+                    }]);
+                if (contract)
+                    contracts.set(event.sessionID, contract);
+            }));
+            registrations.push(await context.session.hook("context", (event) => {
+                const contract = contracts.get(event.sessionID);
+                if (!contract)
+                    return;
+                const guidance = taskGuidance(contract);
+                if (guidance && !event.system.some((part) => part.text === guidance)) {
+                    event.system.push({ type: "text", text: guidance, metadata: { "opencode-guardian": true } });
+                }
+            }));
+        }
+        catch (error) {
+            // Transition/beta hosts may expose a hook method without supporting
+            // these registrations. Preserve idle inspection and fail open.
+            console.error("[opencode-guardian] V2 task hooks unavailable:", error);
+        }
+    }
     const eventLoop = async () => {
         try {
             for await (const event of events) {
                 const eventData = event;
                 if (eventData.type === "session.deleted") {
                     const deletedSessionID = eventData.data?.sessionID ?? eventData.data?.info?.id;
-                    if (deletedSessionID)
+                    if (deletedSessionID) {
                         engine.forgetSession(deletedSessionID);
+                        contracts.delete(deletedSessionID);
+                    }
                     continue;
                 }
                 if (eventData.type !== "session.idle")
@@ -222,9 +293,23 @@ const setup = async (context) => {
                 const sessionID = eventData.data?.sessionID;
                 if (!sessionID)
                     continue;
-                await handleSessionIdle(sessionID, directory, async () => {
+                let sessionDirectory = directory;
+                try {
+                    if (typeof context.session.get === "function") {
+                        const session = await context.session.get({ sessionID });
+                        sessionDirectory = session.location?.directory ?? directory;
+                    }
+                }
+                catch {
+                    // A transient/partial host must not disable the existing idle path.
+                }
+                await handleSessionIdle(sessionID, sessionDirectory, async () => {
                     const messages = await context.session.context({ sessionID });
-                    return normalizeV2Messages(messages);
+                    const normalized = normalizeV2Messages(messages);
+                    const contract = extractTaskContract(normalized);
+                    if (contract)
+                        contracts.set(sessionID, contract);
+                    return normalized;
                 }, async (text) => {
                     await context.session.synthetic({
                         sessionID,
@@ -244,8 +329,10 @@ const setup = async (context) => {
         }
     };
     void eventLoop();
-    return () => {
+    return async () => {
         controller.abort();
+        contracts.clear();
+        await Promise.allSettled(registrations.map((registration) => registration.dispose()));
     };
 };
 /**

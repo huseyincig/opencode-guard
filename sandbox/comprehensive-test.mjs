@@ -371,6 +371,54 @@ const SCENARIOS = [
     expectedKeyword: null,
     shouldBlock: false,
   },
+  {
+    id: "SCENARIO-16",
+    name: "task/completion-gate early exit",
+    description: "Explicit repeated review cannot finish immediately after the first fix",
+    messages: [
+      { info: { id: "task-loop-u", role: "user" }, parts: [{ type: "text", text: "Her hata bulduğunda düzelt ve incelemeyi baştan başlat." }] },
+      { info: { id: "task-loop-a", role: "assistant" }, parts: [
+        { type: "tool", tool: "write", state: {
+          status: "completed", input: { filePath: "src/feature.ts", content: "export const ready = true;" },
+        } },
+        { type: "text", text: "İlk hatayı düzelttim, inceleme tamamlandı." },
+      ] },
+    ],
+    expectedKeyword: "another substantive review",
+    shouldBlock: true,
+  },
+  {
+    id: "SCENARIO-17",
+    name: "task/instruction-fidelity",
+    description: "Earlier deferral must not silently override the current explicit action",
+    messages: [
+      { info: { id: "task-fidelity-u", role: "user" }, parts: [{ type: "text", text: "Implement the feature now." }] },
+      { info: { id: "task-fidelity-a", role: "assistant" }, parts: [
+        { type: "text", text: "You previously paused this feature, so I won't implement it." },
+      ] },
+    ],
+    expectedKeyword: "current explicit user request",
+    shouldBlock: true,
+  },
+  {
+    id: "SCENARIO-18",
+    name: "task/completion-gate successful re-review",
+    description: "A post-change source review allows a documented clean completion",
+    messages: [
+      { info: { id: "task-complete-u", role: "user" }, parts: [{ type: "text", text: "Her hata bulduğunda düzelt ve incelemeyi baştan başlat." }] },
+      { info: { id: "task-complete-a", role: "assistant" }, parts: [
+        { type: "tool", tool: "write", state: {
+          status: "completed", input: { filePath: "src/feature.ts", content: "export const ready = true;" },
+        } },
+        { type: "tool", tool: "read", state: {
+          status: "completed", input: { filePath: "src/feature.ts" }, output: "export const ready = true;",
+        } },
+        { type: "text", text: "Tekrar inceledim, başka hata yok. İnceleme tamamlandı." },
+      ] },
+    ],
+    expectedKeyword: null,
+    shouldBlock: false,
+  },
 ];
 
 let totalPassed = 0;

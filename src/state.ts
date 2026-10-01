@@ -2,6 +2,8 @@ interface SessionState {
   turnKey: string;
   remediationCount: number;
   fingerprints: Set<string>;
+  continuationCount: number;
+  continuationKeys: Set<string>;
 }
 
 export class SessionStateStore {
@@ -14,6 +16,8 @@ export class SessionStateStore {
         turnKey,
         remediationCount: 0,
         fingerprints: new Set<string>(),
+        continuationCount: 0,
+        continuationKeys: new Set<string>(),
       };
       this.sessions.set(sessionID, next);
       return next;
@@ -41,6 +45,29 @@ export class SessionStateStore {
     const state = this.beginTurn(sessionID, turnKey);
     state.remediationCount += 1;
     state.fingerprints.add(fingerprint);
+  }
+
+  canContinue(
+    sessionID: string,
+    turnKey: string,
+    progressKey: string,
+    budget: number
+  ): boolean {
+    const state = this.beginTurn(sessionID, turnKey);
+    return (
+      state.continuationCount < budget &&
+      !state.continuationKeys.has(progressKey)
+    );
+  }
+
+  recordContinuation(
+    sessionID: string,
+    turnKey: string,
+    progressKey: string
+  ): void {
+    const state = this.beginTurn(sessionID, turnKey);
+    state.continuationCount += 1;
+    state.continuationKeys.add(progressKey);
   }
 
   forget(sessionID: string): void {

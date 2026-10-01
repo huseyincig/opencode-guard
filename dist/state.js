@@ -7,6 +7,8 @@ export class SessionStateStore {
                 turnKey,
                 remediationCount: 0,
                 fingerprints: new Set(),
+                continuationCount: 0,
+                continuationKeys: new Set(),
             };
             this.sessions.set(sessionID, next);
             return next;
@@ -25,6 +27,16 @@ export class SessionStateStore {
         const state = this.beginTurn(sessionID, turnKey);
         state.remediationCount += 1;
         state.fingerprints.add(fingerprint);
+    }
+    canContinue(sessionID, turnKey, progressKey, budget) {
+        const state = this.beginTurn(sessionID, turnKey);
+        return (state.continuationCount < budget &&
+            !state.continuationKeys.has(progressKey));
+    }
+    recordContinuation(sessionID, turnKey, progressKey) {
+        const state = this.beginTurn(sessionID, turnKey);
+        state.continuationCount += 1;
+        state.continuationKeys.add(progressKey);
     }
     forget(sessionID) {
         this.sessions.delete(sessionID);

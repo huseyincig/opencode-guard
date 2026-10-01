@@ -15,6 +15,9 @@ import { noSilentFailureRule } from "./rules/no-silent-failure.js";
 import { destructiveOperationsRule } from "./rules/destructive-operations.js";
 import { collectTurnEvidence } from "./evidence.js";
 import { SessionStateStore } from "./state.js";
+import { taskCompletionRule } from "./rules/task-completion.js";
+import { instructionFidelityRule } from "./rules/instruction-fidelity.js";
+import { extractTaskContract, latestMutationSequence } from "./task-contract.js";
 export const REMEDIATION_MARKER = "[opencode-guardian remediation]";
 export const BUILTIN_RULES = {
     "discipline/no-evasion": noEvasionRule,
@@ -29,10 +32,13 @@ export const BUILTIN_RULES = {
     "security/no-secrets": noSecretsRule,
     "manifest/no-ghost-deps": noGhostDepsRule,
     "runtime/circuit-breaker": circuitBreakerRule,
+    "task/completion-gate": taskCompletionRule,
+    "task/instruction-fidelity": instructionFidelityRule,
 };
 const DEFAULT_CONFIG = {
     enabled: true,
     remediationBudget: 1,
+    iterationBudget: 3,
     rules: {
         "discipline/no-evasion": "error",
         "discipline/no-apology": "error",
@@ -46,6 +52,8 @@ const DEFAULT_CONFIG = {
         "security/no-secrets": "error",
         "manifest/no-ghost-deps": "error",
         "runtime/circuit-breaker": "error",
+        "task/completion-gate": "error",
+        "task/instruction-fidelity": "error",
     },
 };
 export function loadConfig(directory) {
@@ -88,7 +96,8 @@ function isGuardianRemediationMessage(message) {
 export function extractCurrentTurn(messages) {
     const firstAgent = messages.find((m) => typeof m.info?.agent === "string" && m.info.agent.length > 0)?.info.agent;
     const isSubagent = Boolean(firstAgent && firstAgent !== "orchestrator");
-    const lastUserMessage = messages.findLast((m) => m.info.role === "user");
+    const lastUserMessage = messages.findLast((message) => message.info.role === "user" &&
+        (!isSyntheticUserMessage(message) || isGuardianRemediationMessage(message)));
     const isRemediationResponse = Boolean(lastUserMessage && isGuardianRemediationMessage(lastUserMessage));
     const lastHumanUserIndex = messages.findLastIndex((m) => m.info.role === "user" &&
         !isGuardianRemediationMessage(m) &&
@@ -163,15 +172,29 @@ export class GuardEngine {
             return { decision: "pass", results: [] };
         }
         const { isSubagent, isRemediationResponse, currentTurn, turnKey, } = extractCurrentTurn(messages);
-        if (isRemediationResponse) {
+        const contract = extractTaskContract(currentTurn);
+        // Ordinary remediation replies are not reinspected. Explicit iterative
+        // tasks are the one exception: inspect only the completion gate, using an
+        // independent bounded continuation budget, not the global repair budget.
+        if (isRemediationResponse && !contract?.iterativeReview) {
             this.inspectedMessages.set(sessionID, messageID);
             return { decision: "pass", results: [] };
         }
         const evidence = collectTurnEvidence(currentTurn);
+        const lastGuardianIndex = currentTurn.findLastIndex(isGuardianRemediationMessage);
+        const freshTurn = isRemediationResponse && lastGuardianIndex >= 0
+            ? [currentTurn[0], ...currentTurn.slice(lastGuardianIndex + 1)]
+            : currentTurn;
+        // Reinspect only new work for the other rules; the completion gate alone
+        // needs the full human-turn history to evaluate progress across rounds.
+        const freshEvidence = freshTurn === currentTurn
+            ? evidence
+            : collectTurnEvidence(freshTurn);
         const results = [];
         const blockingPrompts = [];
         const blockingResults = [];
         for (const [ruleId, rule] of this.rules.entries()) {
+            const isCompletionGate = ruleId === "task/completion-gate";
             const ruleSetting = this.config.rules?.[ruleId];
             const ruleConfig = sanitizeRuleConfig(typeof ruleSetting === "object" ? ruleSetting : {});
             const defaultSetting = DEFAULT_CONFIG.rules?.[ruleId];
@@ -207,10 +230,10 @@ export class GuardEngine {
                 sessionID,
                 directory,
                 messages,
-                currentTurn,
+                currentTurn: isCompletionGate ? currentTurn : freshTurn,
                 isSubagent,
                 ruleConfig,
-                evidence,
+                evidence: isCompletionGate ? evidence : freshEvidence,
             };
             const res = await rule.inspect(context);
             results.push(res);
@@ -223,6 +246,25 @@ export class GuardEngine {
         }
         this.inspectedMessages.set(sessionID, messageID);
         if (blockingPrompts.length > 0) {
+            const completion = blockingResults.find((result) => result.ruleId === "task/completion-gate");
+            if (completion && contract?.iterativeReview) {
+                const configured = this.config.iterationBudget;
+                const budget = typeof configured === "number" && Number.isFinite(configured)
+                    ? Math.max(0, Math.min(5, Math.floor(configured)))
+                    : 3;
+                // A second prompt requires observable progress. A repeated final
+                // message without any new tool work cannot cause an infinite loop.
+                const progressKey = `${latestMutationSequence(evidence)}:${evidence.records.length}`;
+                if (!this.sessionState.canContinue(sessionID, turnKey, progressKey, budget)) {
+                    return { decision: "pass", results };
+                }
+                this.sessionState.recordContinuation(sessionID, turnKey, progressKey);
+                return {
+                    decision: "block",
+                    results,
+                    combinedRemediationPrompt: `${REMEDIATION_MARKER}\n${blockingPrompts.join("\n\n---\n\n")}`,
+                };
+            }
             const configuredBudget = typeof this.config.remediationBudget === "number" &&
                 Number.isFinite(this.config.remediationBudget)
                 ? Math.floor(this.config.remediationBudget)

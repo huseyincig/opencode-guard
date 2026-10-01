@@ -17,6 +17,9 @@ export * from "./rules/no-silent-failure.js";
 export * from "./rules/destructive-operations.js";
 export * from "./evidence.js";
 export * from "./state.js";
+export * from "./task-contract.js";
+export * from "./rules/task-completion.js";
+export * from "./rules/instruction-fidelity.js";
 export * from "./prose.js";
 /**
  * Converts OpenCode v2 session.context() records into the stable internal

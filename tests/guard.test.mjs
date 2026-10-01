@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { GuardEngine, REMEDIATION_MARKER } from "../dist/engine.js";
+import { GuardEngine, REMEDIATION_MARKER, BUILTIN_RULES } from "../dist/engine.js";
 import { noEvasionRule } from "../dist/rules/no-evasion.js";
 import { noShortcutsRule } from "../dist/rules/no-shortcuts.js";
 import { noStubsRule } from "../dist/rules/no-stubs.js";
@@ -17,6 +17,10 @@ import { noUnverifiedClaimsRule } from "../dist/rules/no-unverified-claims.js";
 import { noSilentFailureRule } from "../dist/rules/no-silent-failure.js";
 import { destructiveOperationsRule } from "../dist/rules/destructive-operations.js";
 import { collectTurnEvidence, normalizeErrorFingerprint } from "../dist/evidence.js";
+import { extractTaskContract, taskGuidance } from "../dist/task-contract.js";
+import { taskCompletionRule } from "../dist/rules/task-completion.js";
+import { instructionFidelityRule } from "../dist/rules/instruction-fidelity.js";
+import OpencodeGuardian, { normalizeV2Messages } from "../dist/index.js";
 
 // --- 1. discipline/no-evasion ---
 test("discipline/no-evasion rule detects dismissal phrases", () => {
@@ -3508,4 +3512,441 @@ test("safety/destructive-operations does not flag git clean dry-runs as destruct
   }]);
   assert.ok(context.evidence.records.some((r) => r.kind === "destructive-operation"));
   assert.equal(destructiveOperationsRule.inspect(context).decision, "block");
+});
+
+// --- Task contract and completion control (conservative, evidence-driven) ---
+function taskTurn(instruction, assistantParts, userID = "task-user") {
+  return [
+    { info: { id: userID, role: "user" }, parts: [{ type: "text", text: instruction }] },
+    { info: { id: "task-assistant", role: "assistant" }, parts: assistantParts },
+  ];
+}
+
+function taskCtx(instruction, parts) {
+  const currentTurn = taskTurn(instruction, parts);
+  return {
+    sessionID: "task-test",
+    directory: process.cwd(),
+    messages: currentTurn,
+    currentTurn,
+    ruleConfig: {},
+    evidence: collectTurnEvidence(currentTurn),
+  };
+}
+
+function completedTool(name, input, output = "", exit = 0) {
+  return {
+    type: "tool",
+    tool: name,
+    state: {
+      status: "completed",
+      input,
+      output,
+      metadata: { exit },
+    },
+  };
+}
+
+test("task contract records explicit Turkish/English iteration but not inferred review loops", () => {
+  const cases = [
+    ["Bir hata bulduğunda düzelt ve incelemeyi baştan başlat; hata kalmayana kadar devam et.", true],
+    ["Whenever you find a bug, fix it and repeat the full audit until there are no more issues.", true],
+    ["İlk hatayı düzelt ve tekrar debug turuna başla.", true],
+    ["Lütfen yalnız ilk hatayı düzelt, tekrar başlama.", false],
+    ["Please inspect the source code once.", false],
+    ["What would happen if an audit were repeated?", false],
+  ];
+  for (const [text, expected] of cases) {
+    const contract = extractTaskContract(taskTurn(text, []));
+    assert.equal(contract.iterativeReview, expected, text);
+  }
+});
+
+test("task contract prioritizes the latest genuine human prompt over earlier deferrals and synthetic prompts", () => {
+  const messages = [
+    ...taskTurn("We suspended this work earlier.", []),
+    { info: { id: "u-current", role: "user" }, parts: [{ type: "text", text: "Implement this now and run tests." }] },
+    { info: { id: "other-plugin", role: "user" }, parts: [{ type: "text", text: "Do nothing", synthetic: true }] },
+  ];
+  const contract = extractTaskContract(messages);
+  assert.equal(contract.turnKey, "u-current");
+  assert.deepEqual(contract.requiredVerifications, ["test"]);
+  assert.match(taskGuidance(contract), /latest explicit human instructions/);
+  assert.doesNotMatch(taskGuidance(contract), /suspended this work/);
+});
+
+test("task contract ignores synthetic-only histories and negated verification requirements", () => {
+  const synthetic = [{ info: { id: "s", role: "user" }, parts: [{ type: "text", text: "run tests", synthetic: true }] }];
+  assert.equal(extractTaskContract(synthetic), undefined);
+  const contract = extractTaskContract(taskTurn("Do not run tests.", []));
+  assert.deepEqual(contract.requiredVerifications, []);
+});
+
+test("task/instruction-fidelity catches refusal based on old paused decisions", () => {
+  const scenarios = [
+    ["Implement the feature now.", "You previously paused this feature, so I won't implement it."],
+    ["Bu özelliği şimdi geliştir.", "Daha önce bu özelliği askıya almıştın, bu yüzden yapmıyorum."],
+  ];
+  for (const [instruction, reply] of scenarios) {
+    const result = instructionFidelityRule.inspect(taskCtx(instruction, [{ type: "text", text: reply }]));
+    assert.equal(result.decision, "block", reply);
+    assert.equal(result.findings[0].confidence, "high");
+  }
+});
+
+test("task/instruction-fidelity permits historical context without refusal and explanatory questions", () => {
+  const cases = [
+    ["Implement the feature now.", "You previously paused it, but I implemented it as requested."],
+    ["Why did we pause the feature?", "We paused it because the earlier tests failed."],
+    ["Bu özelliği şimdi geliştir.", "Önceden askıya almıştın, ama şimdi uyguluyorum."],
+  ];
+  for (const [instruction, reply] of cases) {
+    const result = instructionFidelityRule.inspect(taskCtx(instruction, [{ type: "text", text: reply }]));
+    assert.equal(result.decision, "pass", reply);
+  }
+});
+
+test("task/completion-gate catches stopping immediately after a fix when a second review was required", () => {
+  const result = taskCompletionRule.inspect(taskCtx(
+    "Her hata bulduğunda düzelt ve incelemeyi baştan başlat; hata kalmayana kadar devam et.",
+    [completedTool("write", { filePath: "src/feature.ts", content: "export const fixed = true;" }),
+      { type: "text", text: "İlk hatayı düzelttim, iş bitti." }]
+  ));
+  assert.equal(result.decision, "block");
+  assert.equal(result.findings[0].confidence, "high");
+});
+
+test("task/completion-gate passes an actual subsequent review with supported completion", () => {
+  const result = taskCompletionRule.inspect(taskCtx(
+    "Her hata bulduğunda düzelt ve incelemeyi baştan başlat.",
+    [completedTool("write", { filePath: "src/feature.ts", content: "export const fixed = true;" }),
+      completedTool("read", { filePath: "src/feature.ts" }, "export const fixed = true;"),
+      { type: "text", text: "Tekrar inceledim; başka hata yok, denetim tamamlandı." }]
+  ));
+  assert.equal(result.decision, "pass");
+  assert.equal(result.findings.length, 0);
+});
+
+test("task/completion-gate never loops on a concrete blocker or transparent unfinished report", () => {
+  for (const response of [
+    "Erişim gerekiyor; bu nedenle devam edemiyorum.",
+    "I cannot run the test suite: required service is unavailable.",
+    "The audit is not yet complete; I need permission to proceed.",
+  ]) {
+    const result = taskCompletionRule.inspect(taskCtx(
+      "Her hata bulduğunda düzelt, sonra incelemeyi baştan başlat.",
+      [completedTool("write", { filePath: "src/feature.ts", content: "export const fixed = true;" }),
+        { type: "text", text: response }]
+    ));
+    assert.equal(result.decision, "pass", response);
+  }
+});
+
+test("task/completion-gate preserves requested verification as advisory if evidence is unavailable", () => {
+  const result = taskCompletionRule.inspect(taskCtx(
+    "Fix the implementation and run tests.",
+    [completedTool("write", { filePath: "src/feature.ts", content: "export const fixed = true;" }),
+      { type: "text", text: "Task completed." }]
+  ));
+  assert.equal(result.decision, "pass");
+  assert.ok(result.findings.some((finding) => finding.confidence === "medium"));
+});
+
+test("task/completion-gate blocks claiming completion after explicitly requested tests failed", () => {
+  const result = taskCompletionRule.inspect(taskCtx(
+    "Fix it and run tests.",
+    [completedTool("write", { filePath: "src/feature.ts", content: "export const fixed = true;" }),
+      completedTool("bash", { command: "npm test" }, "1 test failed", 1),
+      { type: "text", text: "Task completed." }]
+  ));
+  assert.equal(result.decision, "block");
+  assert.ok(result.findings.some((finding) => finding.confidence === "high"));
+});
+
+test("GuardEngine uses an independent bounded iterative continuation budget", async () => {
+  const engine = new GuardEngine({
+    enabled: true,
+    remediationBudget: 0,
+    iterationBudget: 2,
+    rules: {
+      "task/completion-gate": "error",
+      ...Object.fromEntries(
+        Object.keys(BUILTIN_RULES)
+          .filter((name) => name !== "task/completion-gate")
+          .map((name) => [name, "off"])
+      ),
+    },
+  });
+  const instruction = "Her hata bulduğunda düzelt ve incelemeyi baştan başlat.";
+  const initial = taskTurn(instruction, [
+    completedTool("write", { filePath: "src/a.ts", content: "export const a = 1;" }),
+    { type: "text", text: "Denetim tamamlandı." },
+  ], "human-iteration");
+  assert.equal((await engine.inspect("iteration-session", process.cwd(), initial)).decision, "block");
+  const synthetic = { info: { id: "guardian-synthetic", role: "user" },
+    parts: [{ type: "text", text: REMEDIATION_MARKER + "\nReview again.", synthetic: true }] };
+  const resumed = [
+    ...initial,
+    synthetic,
+    { info: { id: "a-resumed", role: "assistant" }, parts: [
+      completedTool("write", { filePath: "src/b.ts", content: "export const b = 2;" }),
+      { type: "text", text: "Denetim tamamlandı." },
+    ] },
+  ];
+  assert.equal((await engine.inspect("iteration-session", process.cwd(), resumed)).decision, "block");
+  const stalled = [
+    ...resumed,
+    { info: { id: "a-stalled", role: "assistant" },
+      parts: [{ type: "text", text: "Denetim tamamlandı." }] },
+  ];
+  assert.equal((await engine.inspect("iteration-session", process.cwd(), stalled)).decision, "pass");
+});
+
+test("OpenCode V1 chat.message and system.transform preserve explicit task guidance", async () => {
+  const request = "Her hata bulduğunda düzelt, ardından incelemeyi baştan başlat.";
+  const injected = [];
+  const messages = taskTurn(request, [
+    completedTool("write", { filePath: "src/item.ts", content: "export const item = 1;" }),
+    { type: "text", text: "İnceleme tamamlandı." },
+  ]);
+  const hooks = await OpencodeGuardian.server({
+    directory: process.cwd(),
+    client: {
+      session: {
+        messages: async () => ({ data: messages }),
+        promptAsync: async (input) => { injected.push(input.body.parts[0].text); },
+      },
+    },
+  });
+  await hooks["chat.message"](
+    { sessionID: "v1-task", messageID: "task-user" },
+    { message: { role: "user" }, parts: [{ type: "text", text: request }] }
+  );
+  const output = { system: [] };
+  await hooks["experimental.chat.system.transform"]({ sessionID: "v1-task" }, output);
+  assert.equal(output.system.length, 1);
+  assert.match(output.system[0], /another review pass/);
+  await hooks["experimental.chat.system.transform"]({ sessionID: "v1-task" }, output);
+  assert.equal(output.system.length, 1, "must not duplicate guidance");
+  await hooks["experimental.chat.system.transform"]({ sessionID: "another-session" }, output);
+  assert.equal(output.system.length, 1, "must not leak tasks to other sessions");
+
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "v1-task" } } });
+  assert.equal(injected.length, 1);
+  assert.match(injected[0], /another substantive review/);
+  await hooks.event({ event: { type: "session.deleted", properties: { sessionID: "v1-task" } } });
+  const cleared = { system: [] };
+  await hooks["experimental.chat.system.transform"]({ sessionID: "v1-task" }, cleared);
+  assert.deepEqual(cleared.system, []);
+});
+
+test("OpenCode V2 prompt/context hooks and idle subscription use real domain signatures", async () => {
+  const request = "Her hata bulduğunda düzelt ve incelemeyi baştan başlat.";
+  const hooks = new Map();
+  const disposed = [];
+  const synthetic = [];
+  let currentDirectory;
+  let eventController;
+  const context = {
+    location: { directory: process.cwd() },
+    event: {
+      subscribe({ signal }) {
+        eventController = signal;
+        return (async function* () {
+          yield { type: "session.idle", data: { sessionID: "v2-task" } };
+          await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+        })();
+      },
+    },
+    session: {
+      async hook(name, callback) {
+        hooks.set(name, callback);
+        return { async dispose() { disposed.push(name); } };
+      },
+      async get({ sessionID }) {
+        assert.equal(sessionID, "v2-task");
+        currentDirectory = process.cwd();
+        return { location: { directory: currentDirectory } };
+      },
+      async context({ sessionID }) {
+        assert.equal(sessionID, "v2-task");
+        return [
+          { id: "v2-user", type: "user", text: request },
+          { id: "v2-agent", type: "assistant", agent: "orchestrator", content: [
+            { type: "tool", name: "write", state: {
+              status: "completed",
+              input: { filePath: "src/item.ts", content: "export const item = 1;" },
+            } },
+            { type: "text", text: "İnceleme tamamlandı." },
+          ] },
+        ];
+      },
+      async synthetic(input) { synthetic.push(input); return {}; },
+    },
+  };
+  const cleanup = await OpencodeGuardian.setup(context);
+  assert.equal(typeof hooks.get("prompt"), "function");
+  assert.equal(typeof hooks.get("context"), "function");
+  await hooks.get("prompt")({
+    sessionID: "v2-task", messageID: "v2-user",
+    prompt: { text: request }, delivery: "queue",
+  });
+  const modelRequest = { sessionID: "v2-task", system: [], tools: {} };
+  await hooks.get("context")(modelRequest);
+  await hooks.get("context")(modelRequest);
+  assert.equal(modelRequest.system.length, 1, "system prompt should be idempotent");
+  assert.match(modelRequest.system[0].text, /another review pass/);
+  const unrelated = { sessionID: "v2-other", system: [], tools: {} };
+  await hooks.get("context")(unrelated);
+  assert.deepEqual(unrelated.system, []);
+
+  // The idle event loop is asynchronous; the fake host yields the event once.
+  for (let i = 0; i < 50 && synthetic.length === 0; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  assert.equal(synthetic.length, 1);
+  assert.equal(synthetic[0].delivery, "queue");
+  assert.equal(synthetic[0].resume, true);
+  assert.match(synthetic[0].text, /another substantive review/);
+  assert.equal(currentDirectory, process.cwd());
+  await cleanup();
+  assert.equal(eventController.aborted, true);
+  assert.deepEqual(disposed.sort(), ["context", "prompt"]);
+});
+
+test("V2 context normalizer retains synthetic Guardian marker and real user-turn boundaries", () => {
+  const normalized = normalizeV2Messages([
+    { id: "u", type: "user", text: "Fix and re-review." },
+    { id: "s", type: "synthetic", text: REMEDIATION_MARKER + "\nRestart the review." },
+    { id: "a", type: "assistant", content: [{ type: "text", text: "I continued." }] },
+  ]);
+  assert.equal(normalized[1].parts[0].synthetic, true);
+  assert.equal(extractTaskContract(normalized).turnKey, "u");
+});
+
+test("task contract does not convert exploratory questions or explicit prohibitions into actions", () => {
+  const prompts = [
+    "Should we repeat the full audit after every bug?",
+    "What if we run tests and review the code again?",
+    "Do not implement the feature yet.",
+    "Lütfen tekrar başlama, ilk hatayı düzelt.",
+  ];
+  for (const prompt of prompts) {
+    const contract = extractTaskContract(taskTurn(prompt, []));
+    assert.equal(contract.iterativeReview, false, prompt);
+  }
+  for (const prompt of prompts.slice(0, 2)) {
+    assert.deepEqual(extractTaskContract(taskTurn(prompt, [])).requiredVerifications, []);
+  }
+});
+
+test("task contract retains lint when only tests are forbidden", () => {
+  const contract = extractTaskContract(taskTurn("Do not run tests; run lint instead.", []));
+  assert.deepEqual(contract.requiredVerifications, ["lint"]);
+  assert.equal(contract.iterativeReview, false);
+});
+
+test("task/instruction-fidelity never overrides the current user's explicit prohibition", () => {
+  const context = taskCtx(
+    "Do not implement the feature yet.",
+    [{ type: "text", text: "You previously paused the work, so I won't implement it." }]
+  );
+  assert.equal(instructionFidelityRule.inspect(context).decision, "pass");
+  context.currentTurn[0].parts[0].text = "Should we implement the feature?";
+  assert.equal(instructionFidelityRule.inspect(context).decision, "pass");
+});
+
+test("task/completion-gate requires new source inspection for an explicitly repeated source review", () => {
+  const context = taskCtx(
+    "Her hata bulduğunda düzelt, sonra incelemeyi baştan başlat.",
+    [completedTool("write", { filePath: "src/a.ts", content: "export const a = true;" }),
+      completedTool("bash", { command: "npm test" }, "All passing", 0),
+      { type: "text", text: "Testler geçti. İnceleme tamamlandı." }]
+  );
+  assert.equal(extractTaskContract(context.currentTurn).requiresSourceReview, true);
+  assert.equal(taskCompletionRule.inspect(context).decision, "block");
+});
+
+test("task/completion-gate recognizes repeated test-only verification without demanding a new source read", () => {
+  const context = taskCtx(
+    "Fix errors and rerun tests until clean.",
+    [completedTool("write", { filePath: "src/a.ts", content: "export const a = true;" }),
+      completedTool("bash", { command: "npm test" }, "All passing", 0),
+      { type: "text", text: "Task completed." }]
+  );
+  assert.equal(extractTaskContract(context.currentTurn).requiresSourceReview, false);
+  assert.equal(taskCompletionRule.inspect(context).decision, "pass");
+});
+
+test("task/completion-gate resumes after a promise to review when the agent stopped idle", () => {
+  const context = taskCtx(
+    "Her hata bulduğunda düzelt ve incelemeyi baştan başlat.",
+    [completedTool("write", { filePath: "src/a.ts", content: "export const a = true;" }),
+      { type: "text", text: "Düzelttim; tekrar inceleyeceğim." }]
+  );
+  assert.equal(taskCompletionRule.inspect(context).decision, "block");
+});
+
+test("task/completion-gate does not accept empty read outputs as proof of a full source review", () => {
+  const context = taskCtx(
+    "Fix issues and restart the full source review.",
+    [completedTool("write", { filePath: "src/a.ts", content: "export const a = true;" }),
+      completedTool("read", { filePath: "src/a.ts" }, ""),
+      { type: "text", text: "Task completed." }]
+  );
+  assert.equal(taskCompletionRule.inspect(context).decision, "block");
+});
+
+test("iterative Guardian continuation still inspects new security violations", async () => {
+  const engine = new GuardEngine({ enabled: true, iterationBudget: 2 });
+  const request = "Her hata bulduğunda düzelt, ardından incelemeyi baştan başlat.";
+  const initial = taskTurn(request, [
+    completedTool("write", { filePath: "src/feature.ts", content: "export const ready = true;" }),
+    { type: "text", text: "İnceleme tamamlandı." },
+  ], "security-loop-user");
+  assert.equal((await engine.inspect("security-loop", process.cwd(), initial)).decision, "block");
+
+  const synthetic = { info: { id: "security-loop-remediation", role: "user" },
+    parts: [{ type: "text", text: REMEDIATION_MARKER + "\nReview again.", synthetic: true }] };
+  const fakeToken = "sk-" + "a".repeat(40);
+  const resumed = [
+    ...initial,
+    synthetic,
+    { info: { id: "security-loop-assistant", role: "assistant" }, parts: [
+      completedTool("write", {
+        filePath: "src/secret.ts",
+        content: 'export const TOKEN = "' + fakeToken + '";',
+      }),
+      completedTool("read", { filePath: "src/secret.ts" }, 'export const TOKEN = "' + fakeToken + '";'),
+      { type: "text", text: "Tekrar inceledim; inceleme tamamlandı." },
+    ] },
+  ];
+  const result = await engine.inspect("security-loop", process.cwd(), resumed);
+  assert.equal(result.decision, "block");
+  assert.equal(
+    result.results.find((rule) => rule.ruleId === "security/no-secrets")?.decision,
+    "block",
+    "new violations in the continuation must still be inspected"
+  );
+  assert.equal(
+    result.results.find((rule) => rule.ruleId === "task/completion-gate")?.decision,
+    "pass",
+    "the completion gate must use cumulative post-change review evidence"
+  );
+});
+
+test("iterationBudget zero retains completion findings without sending synthetic continuations", async () => {
+  const engine = new GuardEngine({ enabled: true, iterationBudget: 0 });
+  const messages = taskTurn(
+    "Her hata bulduğunda düzelt ve incelemeyi baştan başlat.",
+    [completedTool("write", { filePath: "src/x.ts", content: "export const x = 1;" }),
+      { type: "text", text: "İnceleme tamamlandı." }],
+    "budget-zero-user"
+  );
+  const result = await engine.inspect("budget-zero-task", process.cwd(), messages);
+  assert.equal(result.decision, "pass");
+  assert.equal(
+    result.results.find((item) => item.ruleId === "task/completion-gate")?.decision,
+    "block"
+  );
 });
