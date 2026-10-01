@@ -140,11 +140,11 @@ export function sanitizeUserInstruction(text) {
         .replace(/```[\s\S]*?```/g, " ")
         .replace(/\x60[^\x60\n]+\x60/g, " ")
         .replace(/^\s*>[^\n]*$/gm, " ")
-        .replace(/"[^"\n]{1,300}"/g, " ")
-        .replace(/“[^”\n]{1,300}”/g, " ")
-        .replace(/「[^」\n]{1,300}」/g, " ")
-        .replace(/『[^』\n]{1,300}』/g, " ")
-        .replace(/«[^»\n]{1,300}»/g, " ");
+        .replace(/"[^"\n]*"/g, " ")
+        .replace(/“[^”\n]*”/g, " ")
+        .replace(/「[^」\n]*」/g, " ")
+        .replace(/『[^』\n]*』/g, " ")
+        .replace(/«[^»\n]*»/g, " ");
 }
 function normalized(text) {
     return text.normalize("NFKC").toLocaleLowerCase().replace(/\u0640/g, "").replace(/[\u064b-\u065f]/g, "").replace(/\s+/g, " ").trim();

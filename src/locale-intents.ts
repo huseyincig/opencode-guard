@@ -166,11 +166,11 @@ export function sanitizeUserInstruction(text: string): string {
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/\x60[^\x60\n]+\x60/g, " ")
     .replace(/^\s*>[^\n]*$/gm, " ")
-    .replace(/"[^"\n]{1,300}"/g, " ")
-    .replace(/“[^”\n]{1,300}”/g, " ")
-    .replace(/「[^」\n]{1,300}」/g, " ")
-    .replace(/『[^』\n]{1,300}』/g, " ")
-    .replace(/«[^»\n]{1,300}»/g, " ");
+    .replace(/"[^"\n]*"/g, " ")
+    .replace(/“[^”\n]*”/g, " ")
+    .replace(/「[^」\n]*」/g, " ")
+    .replace(/『[^』\n]*』/g, " ")
+    .replace(/«[^»\n]*»/g, " ");
 }
 
 function normalized(text: string): string {

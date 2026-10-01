@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OpenCode: v1 & v2](https://img.shields.io/badge/OpenCode-v1%20%26%20v2%20Compatible-blue.svg)](https://github.com/huseyincig/opencode-guardian)
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
-[![Tests: 100% Pass](https://img.shields.io/badge/Tests-279%2F279%20Passing-brightgreen.svg)](tests/)
+[![Tests: 100% Pass](https://img.shields.io/badge/Tests-286%2F286%20Passing-brightgreen.svg)](tests/)
 
 A universal, high-performance quality and safety guardian plugin for **OpenCode** AI agents.
 
@@ -218,7 +218,7 @@ flowchart TD
 ```
 
 1. **Evidence collection:** Each completed human turn is normalized once. Tests, builds, typechecks, lint, audits, git operations, file mutations, explicit exit codes, and failure fingerprints become shared evidence.
-2. **Rule evaluation:** Rules inspect both text/code and the same evidence snapshot. A successful verification that happened before a later file edit is considered stale for completion claims. Compound commands are tracked by verification kind; ambiguous failures in multi-step commands remain advisory.
+2. **Rule evaluation:** Rules inspect both text/code and the same evidence snapshot. A successful verification that happened before a later file edit is considered stale for completion claims. A completed file read/view or an actual source-bearing search/diff can support post-change inspection; file-name listings and diff statistics alone cannot. Compound commands are tracked by verification kind; ambiguous failures in multi-step commands remain advisory.
 3. **Conservative blocking:** Missing or ambiguous evidence is generally advisory. Direct contradictions and concrete code/tool violations are the primary blocking path.
 4. **Remediation budgets:** Standard remediation defaults to one intervention per human turn. Explicit iterative reviews use a separate `iterationBudget` (default 3) and will not retry without progress.
 5. **Loop protection:** Guardian's remediation marker is recognized on both V1 and V2. During a Guardian continuation, the completion gate checks the entire human turn, while other rules inspect **only the new assistant work**; prior findings are not repeatedly reprocessed. Synthetic messages from other plugins do not reset the human-turn budget.
@@ -228,7 +228,7 @@ flowchart TD
 ## 🧪 Testing & Verification
 
 ```bash
-# Build + 279 unit/regression tests
+# Build + 286 unit/regression tests
 npm test
 
 # Typecheck TypeScript sources
@@ -276,6 +276,8 @@ opencode-guardian/
 │   ├── multilingual-task.test.mjs  # International positive/negative tests
 │   ├── structured-task.test.mjs    # Exact directive validation
 │   ├── international-adapters.test.mjs # V1/V2 locale hook simulations
+│   ├── report-audit-regression.test.mjs # Prior report-validated regressions
+│   ├── report-followup-regression.test.mjs # Source-review and quoted-intent checks
 │   └── task-policy.test.mjs        # Language-neutral policy tests
 ├── index.js
 ├── server.js

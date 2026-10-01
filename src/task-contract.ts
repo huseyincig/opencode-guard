@@ -212,7 +212,21 @@ export function hasPostMutationReview(
     if (record.kind !== "generic" || !record.output?.trim()) return false;
     const tool = record.toolName.toLowerCase();
     const command = record.command ?? "";
-    return /(?:^|[.:-])(?:read|grep|glob|search|find)(?:$|[.:-])/.test(tool) ||
-      /\b(?:rg|grep|git\s+diff|git\s+show|git\s+status|find|cat)\b/.test(command);
+    // Read/view tools commonly use names such as read_file and file.view.
+    // A file_search returning only paths is not, by itself, source inspection.
+    const directRead = /(?:^|[.:_-])(?:read|view)(?:$|[.:_-])/.test(tool);
+    if (directRead) return true;
+
+    // Name-only searches, glob/find output and git diff --stat are not
+    // evidence of inspecting file contents. Require an actual source snippet.
+    const codeMatch = /^(?:[^\n:]+:)?\d+:\s*\S/m.test(record.output);
+    const searchTool = /(?:^|[.:_-])(?:grep|search)(?:$|[.:_-])/.test(tool);
+    if (searchTool || /\b(?:rg|grep)\b/.test(command)) return codeMatch;
+
+    const directShellRead = /\b(?:cat|head|tail)\b|\bsed\s+-n\b/.test(command) ||
+      /\bgit\s+show\s+[^\s;&|]+:[^\s;&|]+/.test(command);
+    if (directShellRead) return true;
+    return /\bgit\s+(?:diff|show)\b/.test(command) &&
+      /^[+-](?![+-])\s*\S/m.test(record.output);
   });
 }
