@@ -2,6 +2,8 @@
 
 Snapshot: 2026-10-01; see [the executable cases](../tests/security-benchmark.test.mjs).
 
+The independent [gap regression suite](../tests/security-gap-regression.test.mjs) covers selected active backtick substitutions, plain file removal and inert shell examples. The 17-case benchmark counts below remain unchanged.
+
 This frozen, non-executing corpus measures the behavior of `evaluatePreflight` on **17 synthetic examples**, not exploit success in a real OpenCode installation. No shell commands in this corpus are run, no filesystem targets are modified, and no external benchmark dataset is claimed.
 
 | Defined label | Cases | Observed decision |

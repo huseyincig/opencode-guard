@@ -10,6 +10,9 @@ export declare function splitShellStages(command: string): string[][];
 export declare function shellCommandVariants(command: string): string[];
 /** Only active $(...) expressions; text inside single quotes is inert. */
 export declare function activeCommandSubstitutions(command: string): string[];
+/** Only active paired backtick substitutions; single-quoted text and escaped
+ * delimiters are inert. The returned script is classified, never executed. */
+export declare function activeBacktickSubstitutions(command: string): string[];
 /** Literal script passed to a shell; dynamic scripts are not decoded here. */
 export declare function literalShellScripts(command: string): string[];
 /** Find's deletion actions do not require the rm binary to run directly. */

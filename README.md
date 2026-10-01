@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OpenCode: v1 & v2](https://img.shields.io/badge/OpenCode-v1%20%26%20v2%20Compatible-blue.svg)](https://github.com/huseyincig/opencode-guardian)
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
-[![Tests: 100% Pass](https://img.shields.io/badge/Tests-311%2F311%20Passing-brightgreen.svg)](tests/)
+[![Tests: 100% Pass](https://img.shields.io/badge/Tests-314%2F314%20Passing-brightgreen.svg)](tests/)
 
 A universal, high-performance quality and safety guardian plugin for **OpenCode** AI agents.
 
@@ -111,9 +111,9 @@ Use the absolute `file:///` path in the matching host configuration.
 
 For `git clean`, an explicit request authorizes normal cleanup; mentioning the command, forbidding it, or requesting a different command does not. Deleting ignored files with `-x` or `-X` requires separate authorization. A scoped `git -C ... clean` requires matching scope in the request, and shell substitutions or chained commands are not treated as authorized. Dry-run (`-n` / `--dry-run`) is not classified as destructive. **By default Guardian inspects after the tool runs:** findings are advisory at the default `warn` severity, not a pre-execution safety barrier. The separate optional preflight feature below can reject selected risky shell calls before execution.
 
-GuardFall-inspired detection recognizes selected literal shell rewrites (empty quotes, escaped command letters, literal `$IFS` separation, simple literal substitutions, nested shell commands), `find -delete` / `find -exec`, and Base64 decoding piped into a shell. Decoded scripts are flagged as **opaque execution**, not proven deletion. This is deliberately limited pattern recognition, **not** a complete shell interpreter: dynamic payloads, arbitrary expansions, different shells, and unobserved side effects may escape detection. Use host-level permissions, confirmation, and filesystem isolation for prevention.
+GuardFall-inspired detection recognizes selected literal shell rewrites (empty quotes, escaped command letters, literal `$IFS` separation, simple literal substitutions, paired backtick substitutions, nested shell commands), `find -delete` / `find -exec`, and Base64 decoding piped into a shell. Decoded scripts are flagged as **opaque execution**, not proven deletion. This is deliberately limited pattern recognition, **not** a complete shell interpreter: dynamic payloads, arbitrary expansions, different shells, and unobserved side effects may escape detection. Use host-level permissions, confirmation, and filesystem isolation for prevention.
 
-For literal recursive file removals, post-turn authorization is target-specific: permission for one path does not authorize another, a different target in the same command, or an unrequested `sudo` privilege escalation. Quoted examples and questions do not grant permission. Complex shell syntax is not interpreted as authorization; the finding remains advisory under the default `warn` severity.
+For literal file removals (including plain `rm path`), post-turn authorization is target-specific: permission for one path does not authorize another, a different target in the same command, or an unrequested `sudo` privilege escalation. Quoted examples and questions do not grant permission. Complex shell syntax is not interpreted as authorization; the finding remains advisory under the default `warn` severity.
 
 For the bounded, non-executing [synthetic security benchmark](docs/security-benchmark.md) and its limitations, see the benchmark notes below. For a transparent, evidence-linked coverage and gaps assessment, see [OWASP Agentic Top 10 (2026) mapping](https://github.com/huseyincig/opencode-guardian/blob/main/docs/owasp-agentic-top10-2026.md). This is a scope assessment, not a claim of OWASP certification or complete protection.
 
@@ -172,7 +172,7 @@ To customize behavior, create `opencode-guardian.json` (or legacy `opencode-guar
 Set `"preflight": { "enabled": true }` in `opencode-guardian.json` to register a pre-execution shell-tool hook. This is **disabled by default**; the existing `session.idle` checks and `safety/destructive-operations: warn` behavior remain unchanged.
 
 - **V1:** uses `tool.execute.before`. **V2:** uses `ctx.tool.hook("execute.before", ...)`. When a full V2 host cannot register the requested hook, setup fails visibly rather than silently claiming that protection is active.
-- When enabled, the hook rejects recognized destructive shell operations (including the GuardFall-inspired literal rewrites) and decoded payloads piped into a shell. Shell-tool calls without an inspectable string command are also rejected. It does not modify tool arguments or invoke shell commands itself.
+- When enabled, the strict hook rejects recognized destructive shell operations (including plain `rm path`, paired active backtick substitutions and selected GuardFall-inspired literal rewrites) and decoded payloads piped into a shell. Shell-tool calls without an inspectable string command are also rejected. It does not modify tool arguments or invoke shell commands itself.
 - This initial strict mode rejects recognized risks **even when the user has requested the operation**. It has no implicit consent bypass. Leave it disabled when legitimate destructive operations must be authorized through OpenCode's own permission mechanisms.
 - Only recognized shell-execution tool names are inspected. Custom tool names, arbitrary shell expansions, scripts launched by other tools, filesystem writes through non-shell APIs, and other paths may fall outside its detection. This is **not a complete shell parser, a sandbox, or a replacement for host permissions**.
 
@@ -251,7 +251,7 @@ flowchart TD
 ## 🧪 Testing & Verification
 
 ```bash
-# Build + 311 unit/regression tests
+# Build + 314 unit/regression tests
 npm test
 
 # Typecheck TypeScript sources

@@ -1,5 +1,5 @@
 import { extractLikelyShellMutation } from "./tool-input.js";
-import { activeCommandSubstitutions, hasFindDeletion, literalShellScripts, shellCommandVariants, splitShellStages } from "./shell-risk.js";
+import { activeBacktickSubstitutions, activeCommandSubstitutions, hasFindDeletion, literalShellScripts, shellCommandVariants, splitShellStages } from "./shell-risk.js";
 export { isOpaqueShellExecution } from "./shell-risk.js";
 function stringify(value) {
     if (typeof value === "string")
@@ -230,8 +230,30 @@ export function isDestructiveCommand(command, depth = 0) {
         return false;
     return [
         ...activeCommandSubstitutions(command),
+        ...activeBacktickSubstitutions(command),
         ...literalShellScripts(command),
     ].some((nested) => isDestructiveCommand(nested, depth + 1));
+}
+/** Recognize actual literal rm invocations, not quoted examples or help output.
+ * Separate from recursive-force classification to preserve existing evidence kinds. */
+export function isSimpleFileRemoval(command, depth = 0) {
+    if (shellCommandVariants(command).some((candidate) => {
+        const match = /^\s*(?:sudo\s+)?rm\s+(.+)$/i.exec(candidate);
+        if (!match)
+            return false;
+        const args = match[1].trim().split(/\s+/);
+        if (args.some((arg) => arg === "--help" || arg === "--version"))
+            return false;
+        return args.some((arg) => arg !== "--" && !arg.startsWith("-"));
+    }))
+        return true;
+    if (depth >= 4)
+        return false;
+    return [
+        ...activeCommandSubstitutions(command),
+        ...activeBacktickSubstitutions(command),
+        ...literalShellScripts(command),
+    ].some((nested) => isSimpleFileRemoval(nested, depth + 1));
 }
 /** Include recognized hidden deletions when ordering review/test evidence. */
 function isLikelyShellFileDeletion(command, depth = 0) {
@@ -244,6 +266,7 @@ function isLikelyShellFileDeletion(command, depth = 0) {
         return false;
     return [
         ...activeCommandSubstitutions(command),
+        ...activeBacktickSubstitutions(command),
         ...literalShellScripts(command),
     ].some((nested) => isLikelyShellFileDeletion(nested, depth + 1));
 }

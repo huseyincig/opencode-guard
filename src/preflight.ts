@@ -1,4 +1,4 @@
-import { isDestructiveCommand, isOpaqueShellExecution } from "./evidence.js";
+import { isDestructiveCommand, isOpaqueShellExecution, isSimpleFileRemoval } from "./evidence.js";
 
 export type PreflightFinding = "destructive-command" | "opaque-shell-execution" | "uninspectable-shell-input";
 
@@ -34,7 +34,7 @@ export function evaluatePreflight(
     return "uninspectable-shell-input";
   }
   const commands = values as string[];
-  if (commands.some((command) => isDestructiveCommand(command))) return "destructive-command";
+  if (commands.some((command) => isDestructiveCommand(command) || isSimpleFileRemoval(command))) return "destructive-command";
   if (commands.some(isOpaqueShellExecution)) return "opaque-shell-execution";
   // Different shell command aliases give no reliable way to know which the
   // host will execute. Do not pick only the first, apparently safe value.

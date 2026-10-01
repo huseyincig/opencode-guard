@@ -1,4 +1,4 @@
-import { isDestructiveCommand, isOpaqueShellExecution } from "./evidence.js";
+import { isDestructiveCommand, isOpaqueShellExecution, isSimpleFileRemoval } from "./evidence.js";
 /**
  * Only inspect tools known to execute shell commands. Other tools are handled
  * by OpenCode's own permissions and the existing post-turn Guardian rules.
@@ -26,7 +26,7 @@ export function evaluatePreflight(tool, input) {
         return "uninspectable-shell-input";
     }
     const commands = values;
-    if (commands.some((command) => isDestructiveCommand(command)))
+    if (commands.some((command) => isDestructiveCommand(command) || isSimpleFileRemoval(command)))
         return "destructive-command";
     if (commands.some(isOpaqueShellExecution))
         return "opaque-shell-execution";

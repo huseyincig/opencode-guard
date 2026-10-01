@@ -123,6 +123,42 @@ export function activeCommandSubstitutions(command: string): string[] {
   return found;
 }
 
+/** Only active paired backtick substitutions; single-quoted text and escaped
+ * delimiters are inert. The returned script is classified, never executed. */
+export function activeBacktickSubstitutions(command: string): string[] {
+  const scripts: string[] = [];
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (ch === "\\" && quote !== "'") {
+      i++;
+      continue;
+    }
+    if (ch === "'" && quote !== '"') {
+      quote = quote === "'" ? null : "'";
+      continue;
+    }
+    if (ch === '"' && quote !== "'") {
+      quote = quote === '"' ? null : '"';
+      continue;
+    }
+    if (ch !== "\x60" || quote === "'") continue;
+    let end = i + 1;
+    for (; end < command.length; end++) {
+      if (command[end] === "\\") {
+        end++;
+        continue;
+      }
+      if (command[end] === "\x60") break;
+    }
+    if (end < command.length) {
+      scripts.push(command.slice(i + 1, end));
+      i = end;
+    }
+  }
+  return scripts;
+}
+
 /** Literal script passed to a shell; dynamic scripts are not decoded here. */
 export function literalShellScripts(command: string): string[] {
   const scripts: string[] = [];

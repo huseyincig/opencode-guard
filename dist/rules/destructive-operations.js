@@ -1,4 +1,4 @@
-import { gitCleanInvocation, isDestructiveCommand, isOpaqueShellExecution } from "../evidence.js";
+import { gitCleanInvocation, isDestructiveCommand, isOpaqueShellExecution, isSimpleFileRemoval } from "../evidence.js";
 import { hasFindDeletion } from "../shell-risk.js";
 function latestHumanRequest(context) {
     const user = context.currentTurn.findLast((message) => message.info.role === "user" &&
@@ -166,18 +166,19 @@ export const destructiveOperationsRule = {
                     continue;
                 const destructive = isDestructiveCommand(command);
                 const opaque = isOpaqueShellExecution(command);
-                if (!destructive && !opaque)
+                const simpleRemoval = isSimpleFileRemoval(command);
+                if (!destructive && !opaque && !simpleRemoval)
                     continue;
-                if (destructive && !opaque && explicitlyAuthorized(request, command))
+                if ((destructive || simpleRemoval) && !opaque && explicitlyAuthorized(request, command))
                     continue;
                 findings.push({
                     ruleId: "safety/destructive-operations",
-                    pattern: destructive ? "destructive command" : "opaque shell execution",
+                    pattern: destructive || simpleRemoval ? "destructive command" : "opaque shell execution",
                     messageSnippet: command.replace(/\s+/g, " ").slice(0, 240),
-                    description: destructive
+                    description: destructive || simpleRemoval
                         ? "A destructive operation was detected without matching explicit authorization in the current turn."
                         : "A decoded script was passed to a shell; its effects cannot be determined from the visible command.",
-                    confidence: destructive ? "high" : "medium",
+                    confidence: destructive || simpleRemoval ? "high" : "medium",
                 });
             }
         }

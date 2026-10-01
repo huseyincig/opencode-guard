@@ -8,6 +8,9 @@ export declare function gitCleanInvocation(command: string): string | undefined;
  * Post-execution classification cannot serve as a pre-execution safety gate.
  */
 export declare function isDestructiveCommand(command: string, depth?: number): boolean;
+/** Recognize actual literal rm invocations, not quoted examples or help output.
+ * Separate from recursive-force classification to preserve existing evidence kinds. */
+export declare function isSimpleFileRemoval(command: string, depth?: number): boolean;
 export declare function collectTurnEvidence(currentTurn: SessionMessage[]): TurnEvidence;
 export declare function latestEvidence(evidence: TurnEvidence | undefined, kind: EvidenceKind): EvidenceRecord | undefined;
 export declare function hasSuccessfulEvidence(evidence: TurnEvidence | undefined, kind: EvidenceKind): boolean;
