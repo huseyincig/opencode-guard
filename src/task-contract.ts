@@ -219,14 +219,19 @@ export function hasPostMutationReview(
 
     // Name-only searches, glob/find output and git diff --stat are not
     // evidence of inspecting file contents. Require an actual source snippet.
-    const codeMatch = /^(?:[^\n:]+:)?\d+:\s*\S/m.test(record.output);
+    const codeMatch = /^(?:(?:[A-Za-z]:)?[^\n:]+:)?\d+:(?!\d+:[ \t]*$)(?:\d+:)?\s*\S/m.test(record.output);
     const searchTool = /(?:^|[.:_-])(?:grep|search)(?:$|[.:_-])/.test(tool);
-    if (searchTool || /\b(?:rg|grep)\b/.test(command)) return codeMatch;
+    // Recognize executed shell commands, not words inside echo arguments or
+    // a pipeline into cat/head that might return only filenames or statistics.
+    const shellSearch = /(?:^|(?:&&|\|\||;|\n)\s*)\s*(?:rg|grep)(?=\s|$)/m.test(command);
+    if (searchTool || shellSearch) return codeMatch;
 
-    const directShellRead = /\b(?:cat|head|tail)\b|\bsed\s+-n\b/.test(command) ||
-      /\bgit\s+show\s+[^\s;&|]+:[^\s;&|]+/.test(command);
+    const directShellRead =
+      /(?:^|(?:&&|\|\||;|\n)\s*)\s*(?:cat|head|tail)(?=\s|$)/m.test(command) ||
+      /(?:^|(?:&&|\|\||;|\n)\s*)\s*sed\s+-n(?=\s|$)/m.test(command) ||
+      /(?:^|(?:&&|\|\||;|\n)\s*)\s*git\s+show\s+[^\s;&|]+:[^\s;&|]+(?=\s|$|[;&|])/m.test(command);
     if (directShellRead) return true;
-    return /\bgit\s+(?:diff|show)\b/.test(command) &&
+    return /(?:^|(?:&&|\|\||;|\n)\s*)\s*git\s+(?:diff|show)(?=\s|$)/m.test(command) &&
       /^[+-](?![+-])\s*\S/m.test(record.output);
   });
 }
