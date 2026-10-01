@@ -3353,3 +3353,67 @@ test("discipline/no-evasion continues past negated wording to detect a later dis
     result.findings.some((finding) => finding.pattern === "unrelated to this change")
   );
 });
+
+
+test("safety/destructive-operations recognizes explicit git clean authorization", async () => {
+  for (const [request, command] of [
+    ["git clean -fd yap", "git clean -fd"],
+    ["Please run git clean -f", "git clean -f"],
+    ["git clean -fdx uygula", "git clean -fdx"],
+    ["git clean -fX uygula", "git clean -fX"],
+  ]) {
+    const context = makeEvidenceContext([
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command },
+          metadata: { exit: 0 },
+        },
+      },
+    ]);
+    context.currentTurn[0].parts[0].text = request;
+    const result = destructiveOperationsRule.inspect(context);
+    assert.equal(result.decision, "pass", request + ": " + command);
+    assert.equal(result.findings.length, 0, request + ": " + command);
+
+    const engine = new GuardEngine();
+    const inspected = await engine.inspect(
+      "authorized-clean-" + command,
+      process.cwd(),
+      context.currentTurn
+    );
+    const finding = inspected.results.find(
+      (item) => item.ruleId === "safety/destructive-operations"
+    );
+    assert.equal(finding?.decision, "pass", command);
+  }
+});
+
+test("safety/destructive-operations does not broaden or fabricate git clean authorization", () => {
+  for (const [request, command] of [
+    ["Just inspect the repository.", "git clean -fd"],
+    ["git clean yapma", "git clean -fd"],
+    ["Do not run git clean.", "git clean -fd"],
+    ["git clean -fd yap", "git clean -fdx"],
+    ["git clean -fd yap", "git clean -fX"],
+    ["git clean -fd yap", "git clean -fd && rm -rf ."],
+  ]) {
+    const context = makeEvidenceContext([
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command },
+          metadata: { exit: 0 },
+        },
+      },
+    ]);
+    context.currentTurn[0].parts[0].text = request;
+    const result = destructiveOperationsRule.inspect(context);
+    assert.equal(result.decision, "block", request + ": " + command);
+    assert.equal(result.findings.length, 1, request + ": " + command);
+  }
+});

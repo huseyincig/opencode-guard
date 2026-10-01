@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OpenCode: v1 & v2](https://img.shields.io/badge/OpenCode-v1%20%26%20v2%20Compatible-blue.svg)](https://github.com/huseyincig/opencode-guardian)
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
-[![Tests: 100% Pass](https://img.shields.io/badge/Tests-121%2F121%20Passing-brightgreen.svg)](tests/)
+[![Tests: 100% Pass](https://img.shields.io/badge/Tests-123%2F123%20Passing-brightgreen.svg)](tests/)
 
 A universal, high-performance quality and safety guardian plugin for **OpenCode** AI agents.
 
@@ -107,6 +107,8 @@ Use the absolute `file:///` path in the matching host configuration.
 
 `*` These rules distinguish high-confidence blocking behavior from lower-confidence advisory findings.
 
+For `git clean`, an explicit request authorizes normal cleanup. Deleting ignored files with `-x` or `-X` requires separate explicit authorization. Destructive-operation findings are advisory at the default `warn` severity; Guardian inspects after the tool runs.
+
 ---
 
 ## ⚙️ Configuration (`opencode-guardian.json`)
@@ -191,7 +193,7 @@ flowchart TD
 ## 🧪 Testing & Verification
 
 ```bash
-# Build + 121 unit/regression tests
+# Build + 123 unit/regression tests
 npm test
 
 # Typecheck TypeScript sources
@@ -232,7 +234,7 @@ opencode-guardian/
 │   ├── smoke-test.mjs
 │   └── comprehensive-test.mjs
 ├── tests/
-│   └── guard.test.mjs       # 121 unit/regression tests
+│   └── guard.test.mjs       # 123 unit/regression tests
 ├── index.js
 ├── server.js
 ├── package.json

@@ -294,12 +294,15 @@ function recordFromPart(part: MessagePart, sequence: number): EvidenceRecord[] {
       outcome.exitCode === undefined
         ? "unknown"
         : outcome.status;
+    const isVerification = verificationKinds.has(kind);
+    const maskedVerification =
+      Boolean(command) &&
+      isVerification &&
+      isVerificationFailureMask(command);
+    const ambiguousVerification =
+      isVerification && (nonSequentialCompound || pipedWithoutPipefail);
     const evidenceStatus =
-      command &&
-      verificationKinds.has(kind) &&
-      isVerificationFailureMask(command) ||
-      (verificationKinds.has(kind) &&
-        (nonSequentialCompound || pipedWithoutPipefail))
+      maskedVerification || ambiguousVerification
         ? "unknown"
         : commandStatus;
 

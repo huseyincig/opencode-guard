@@ -39,6 +39,31 @@ function explicitlyAuthorized(request: string, command: string): boolean {
     );
   }
 
+  if (/\bgit\s+clean\b/i.test(command)) {
+    // An explicit git-clean request authorizes normal untracked-file cleanup,
+    // but does not implicitly authorize deleting ignored files (-x / -X).
+    if (
+      // Do not let authorization for git clean cover another command chained
+      // into the same shell invocation.
+      /[;&|\n]/.test(command) ||
+      !/\bgit\s+clean\b/i.test(request) ||
+      /\b(?:do\s+not|don't|dont|never|avoid|without)\s+(?:run\s+|execute\s+|use\s+)?git\s+clean\b/i.test(request) ||
+      /\bgit\s+clean\b[^.!?\n]{0,30}\b(?:yapma|yapmayın|çalıştırma|çalıştırmayın|istemiyorum)\b/iu.test(request)
+    ) {
+      return false;
+    }
+
+    const ignoredFiles = /(?:^|\s)-[a-z]*[xX][a-z]*(?=\s|$)|--(?:exclude-standard|ignored)(?=\s|$)/.test(
+      command
+    );
+    return (
+      !ignoredFiles ||
+      /(?:^|\s)-[a-z]*[xX][a-z]*(?=\s|$)|\b(?:ignored\s+files?|gitignored\s+files?|yok\s+sayılan\s+dosyalar|ignore\s+edilen\s+dosyalar)\b/iu.test(
+        request
+      )
+    );
+  }
+
   if (/(?:^|[;&|]\s*)(?:sudo\s+)?rm\b/i.test(command)) {
     const deleteRequested =
       /\b(?:delete|remove|wipe|sil|silin|sileyim|kaldır|kaldırın)\b/iu.test(

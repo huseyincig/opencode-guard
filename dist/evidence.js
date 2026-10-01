@@ -231,11 +231,12 @@ function recordFromPart(part, sequence) {
             outcome.exitCode === undefined
             ? "unknown"
             : outcome.status;
-        const evidenceStatus = command &&
-            verificationKinds.has(kind) &&
-            isVerificationFailureMask(command) ||
-            (verificationKinds.has(kind) &&
-                (nonSequentialCompound || pipedWithoutPipefail))
+        const isVerification = verificationKinds.has(kind);
+        const maskedVerification = Boolean(command) &&
+            isVerification &&
+            isVerificationFailureMask(command);
+        const ambiguousVerification = isVerification && (nonSequentialCompound || pipedWithoutPipefail);
+        const evidenceStatus = maskedVerification || ambiguousVerification
             ? "unknown"
             : commandStatus;
         records.push({
