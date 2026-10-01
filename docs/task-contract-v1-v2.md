@@ -10,6 +10,8 @@ This is the implementation design for **unreleased** Guardian task controls on `
 - Actual installed TypeScript declarations verified against `@opencode-ai/plugin` **1.18.34** and `@opencode/plugin` **2.0.21**, including `SessionPrompt`, `SessionContext`, `ToolHooks`, and `SystemPart`.
 - [OpenCode issue #44788](https://github.com/anomalyco/opencode/issues/44788) describes a **reported beta-host failure** to deliver events/context/synthetic prompts. Its existence does not establish that all V2 builds fail, but plugin capability detection alone cannot prove runtime delivery.
 
+For the separately implemented 11-language signal packs, the exact first-line directive, the pure task policy, and source-verified shell/OPA tradeoffs, see [international policy design](international-policy.md).
+
 ## Lifecycle and actual integration
 
 | Operation | V1 (`@opencode-ai/plugin`) | V2 (`@opencode/plugin`) |
@@ -45,7 +47,7 @@ OpenCode V2 partial or transition contexts are deliberately ignored if the requi
 
 ## Further development, intentionally not claimed as implemented
 
-- A user-confirmed, structured task schema for complex multi-part requirements; do not infer arbitrary scope from keywords.
+- Rich, user-confirmed structured task scopes for complex multi-part requirements; the current optional first-line directive supports a small typed contract, not a full per-file scope manifest.
 - Richer per-file coverage and before/after diff evidence for a genuinely verifiable complete audit.
 - Optional, separately authorized **pre-tool** checks using V1 `tool.execute.before` and V2 `ctx.tool.hook("execute.before")`; keep default fail-open and avoid unsafe blanket command blocking.
 - Real-host integration tests against the exact OpenCode V1 and V2 binary builds in which the plugin will be deployed, including event loss and session interruption.

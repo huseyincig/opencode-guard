@@ -1,10 +1,10 @@
 import type { GuardRule, RuleFinding, RuleResult, TurnInspectionContext } from "../types.js";
 import { sanitizeProseForInspection } from "../prose.js";
+import { classifyInternationalAgentReport } from "../locale-intents.js";
 import {
   extractTaskContract,
-  hasPostMutationReview,
-  latestMutationSequence,
 } from "../task-contract.js";
+import { evaluateTaskPolicy } from "../task-policy.js";
 
 function latestAssistantProse(context: TurnInspectionContext): string {
   const last = context.currentTurn.findLast((message) => message.info.role === "assistant");
@@ -41,16 +41,13 @@ export const taskCompletionRule: GuardRule = {
     }
     // Transparent incomplete work and real blockers should be reported to the
     // user instead of being turned into synthetic retries.
-    if (CLEAR_BLOCKER.test(prose)) {
+    const internationalReport = classifyInternationalAgentReport(prose);
+    if (CLEAR_BLOCKER.test(prose) || internationalReport === "blocked") {
       return { ruleId: this.id, decision: "pass", findings };
     }
 
-    const lastMutation = latestMutationSequence(evidence);
-    if (
-      contract.iterativeReview &&
-      lastMutation >= 0 &&
-      !hasPostMutationReview(evidence, contract.requiresSourceReview)
-    ) {
+    const policy = evaluateTaskPolicy(contract, evidence);
+    if (policy.review === "missing") {
       const finding: RuleFinding = {
         ruleId: this.id,
         pattern: "iteration ended after a change without a new review",
@@ -65,24 +62,21 @@ export const taskCompletionRule: GuardRule = {
       blocking.push(finding);
     }
 
-    if (CLOSING.test(prose)) {
-      for (const kind of contract.requiredVerifications) {
-        const relevant = evidence.records
-          .filter((record) => record.kind === kind && record.sequence >= lastMutation)
-          .sort((left, right) => right.sequence - left.sequence)[0];
-        if (relevant?.status === "success") continue;
+    if (CLOSING.test(prose) || internationalReport === "completed") {
+      for (const verification of policy.verifications) {
+        if (verification.status === "passed") continue;
         const finding: RuleFinding = {
           ruleId: this.id,
-          pattern: `${kind} verification not confirmed`,
+          pattern: `${verification.kind} verification not confirmed`,
           messageSnippet: prose.slice(0, 160),
           description:
-            relevant?.status === "failure"
-              ? `The task is reported as complete although the latest requested ${kind} check failed.`
-              : `The user requested ${kind} verification, but a successful result after the last change is not visible.`,
-          confidence: relevant?.status === "failure" ? "high" : "medium",
+            verification.status === "failed"
+              ? `The task is reported as complete although the latest requested ${verification.kind} check failed.`
+              : `The user requested ${verification.kind} verification, but a successful result after the last change is not visible.`,
+          confidence: verification.status === "failed" ? "high" : "medium",
         };
         findings.push(finding);
-        if (relevant?.status === "failure") blocking.push(finding);
+        if (verification.status === "failed") blocking.push(finding);
       }
     }
 

@@ -1,3 +1,4 @@
+import { extractInternationalNegations, extractInternationalSignals, sanitizeUserInstruction } from "./locale-intents.js";
 function userText(message) {
     return message.parts
         .filter((part) => part.type === "text" && typeof part.text === "string")
@@ -12,7 +13,7 @@ export function currentHumanMessage(messages) {
 const ITERATION = /(?:\b(?:repeat|restart|rerun|re-run|again|until|every\s+(?:time|round)|each\s+(?:time|round))\b|\b(?:tekrar|yeniden|baştan|her\s+(?:turda|tura|seferinde|hata|bir\s+hata)|hata\s+kalmayana|bulmayana|sıfır\s+hata)\b)/iu;
 const REVIEW = /(?:\b(?:audit|review|inspect|debug|scan|check|test|pass|iteration|issue|bug|error|defect|fix)\b|\b(?:denetim|incele|kontrol|debug|test|tur|hata|sorun|düzelt|bulgu)\b)/iu;
 const CONTINUE = /(?:\b(?:until|restart|repeat|rerun|re-run|again|each\s+(?:time|round)|every\s+(?:time|round))\b|\b(?:tekrar|yeniden|baştan|her\s+(?:turda|tura|seferinde|hata)|kalmayana|bulmayana)\b)/iu;
-const NEGATED_LOOP = /(?:\b(?:do\s+not|don't|dont|never|without|stop)\s+(?:repeat|restart|rerun|re-run|again)\b|\b(?:tekrarlama|tekrarlamayın|tekrar\s+başlama|yeniden\s+başlama|baştan\s+başlama)\b)/iu;
+const NEGATED_LOOP = /(?:\b(?:do\s+not|don't|dont|never|without|stop)\s+(?:repeat|restart|rerun|re-run|again)\b|\b(?:tekrarlama|tekrarlamayın|tekrar\s+etme|tekrar\s+başla(?:t)?ma|yeniden\s+başla(?:t)?ma|baştan\s+başla(?:t)?ma)\b)/iu;
 /** Questions about a possible workflow are not instructions to execute it. */
 export function isExploratoryPrompt(text) {
     return /^\s*(?:should\s+we|would\s+we|could\s+we|what\s+if|do\s+you\s+think\s+we\s+should|sence|acaba|ne\s+olur\s+eğer)\b/iu.test(text);
@@ -26,15 +27,46 @@ const VERIFICATION_REQUESTS = [
     { kind: "lint", expression: /(?:\b(?:run|execute)\s+(?:the\s+)?lint\b|\blint\s+(?:çalıştır|çalıştırın|yap|yapın)\b)/iu },
     { kind: "audit", expression: /(?:\b(?:run|execute)\s+(?:the\s+)?(?:security\s+)?audit\b|\b(?:npm\s+audit|güvenlik\s+denetimi)\s+(?:çalıştır|çalıştırın|yap|yapın)\b)/iu },
 ];
+/** Only an exact first-line directive is accepted; examples in code do not count. */
+export function parseExplicitTaskDirective(text) {
+    const firstLine = text.split(/\r?\n/, 1)[0]?.trim() ?? "";
+    const prefix = "@guardian-task ";
+    if (!firstLine.startsWith(prefix) || firstLine.length > 800)
+        return undefined;
+    try {
+        const value = JSON.parse(firstLine.slice(prefix.length));
+        if (!value || typeof value !== "object" || Array.isArray(value))
+            return undefined;
+        const item = value;
+        if (Object.keys(item).some((key) => !["mode", "review", "verify"].includes(key))) {
+            return undefined;
+        }
+        if (item.mode !== "iterative-review" && item.mode !== "one-pass")
+            return undefined;
+        if (item.review !== "source" && item.review !== "checks")
+            return undefined;
+        if (!Array.isArray(item.verify) || item.verify.length > 5 ||
+            item.verify.some((kind) => !["test", "build", "typecheck", "lint", "audit"].includes(kind))) {
+            return undefined;
+        }
+        return {
+            mode: item.mode,
+            review: item.review,
+            verify: [...new Set(item.verify)],
+        };
+    }
+    catch {
+        return undefined;
+    }
+}
+function deniedVerification(text, kind) {
+    const target = kind === "test" ? "tests?" : kind;
+    const denied = new RegExp(`\\b(?:do\\s+not|don't|dont|without|never)\\s+(?:run|execute)\\s+(?:the\\s+)?${target}\\b|\\b${kind === "test" ? "testleri?" : kind}\\s+(?:çalıştırma|çalıştırmayın|yapma|yapmayın)\\b`, "iu");
+    return denied.test(text);
+}
 function explicitVerifications(text) {
     return VERIFICATION_REQUESTS
-        .filter(({ kind, expression }) => {
-        if (!expression.test(text))
-            return false;
-        const target = kind === "test" ? "tests?" : kind;
-        const denied = new RegExp(`\\b(?:do\\s+not|don't|dont|without|never)\\s+(?:run|execute)\\s+(?:the\\s+)?${target}\\b|\\b${kind === "test" ? "testleri?" : kind}\\s+(?:çalıştırma|çalıştırmayın|yapma|yapmayın)\\b`, "iu");
-        return !denied.test(text);
-    })
+        .filter(({ kind, expression }) => expression.test(text) && !deniedVerification(text, kind))
         .map(({ kind }) => kind);
 }
 export function extractTaskContract(messages) {
@@ -44,20 +76,44 @@ export function extractTaskContract(messages) {
     const text = userText(human).trim();
     if (!text)
         return undefined;
-    const exploratory = isExploratoryPrompt(text);
+    const directive = parseExplicitTaskDirective(text);
+    const body = sanitizeUserInstruction(text.startsWith("@guardian-task ")
+        ? text.slice(text.indexOf("\n") < 0 ? text.length : text.indexOf("\n") + 1).trim()
+        : text);
+    const exploratory = isExploratoryPrompt(body);
+    const international = extractInternationalSignals(body);
+    const negations = extractInternationalNegations(body);
+    const negatedLoop = NEGATED_LOOP.test(body) || negations.iteration;
     const iterativeReview = !exploratory &&
-        !NEGATED_LOOP.test(text) &&
-        ITERATION.test(text) &&
-        REVIEW.test(text) &&
-        CONTINUE.test(text);
-    const requiredVerifications = exploratory ? [] : explicitVerifications(text);
+        !negatedLoop &&
+        (directive
+            ? directive.mode === "iterative-review"
+            : international?.iterativeReview === true ||
+                (ITERATION.test(body) && REVIEW.test(body) && CONTINUE.test(body)));
+    const requestedVerifications = exploratory
+        ? []
+        : directive
+            ? directive.verify
+            : [...new Set([
+                    ...explicitVerifications(body),
+                    ...(international?.requiredVerifications ?? []),
+                ])];
+    // A contradictory natural-language prohibition cannot be overridden by a
+    // machine-readable header. Prefer no extra duty to an invented mandate.
+    const requiredVerifications = requestedVerifications.filter((kind) => !(kind === "test" && negations.test) &&
+        !deniedVerification(body, kind));
     return {
         turnKey: human.info.id ?? "no-human-user",
-        explicitAction: (!exploratory && ACTION_REQUEST.test(text)) || iterativeReview,
+        explicitAction: Boolean(directive) ||
+            ((!exploratory && ACTION_REQUEST.test(body)) ||
+                (international?.explicitAction ?? false) || iterativeReview),
         iterativeReview,
-        requiresSourceReview: iterativeReview && SOURCE_REVIEW.test(text),
+        requiresSourceReview: iterativeReview &&
+            (directive ? directive.review === "source" :
+                SOURCE_REVIEW.test(body) || international?.requiresSourceReview === true),
         requiredVerifications,
         requiresExplicitCompletion: iterativeReview || requiredVerifications.length > 0,
+        signalLocale: directive ? "structured" : international?.locale,
     };
 }
 export function taskGuidance(contract) {

@@ -1,4 +1,5 @@
 import type { SessionMessage, TurnEvidence } from "./types.js";
+import { extractInternationalNegations, extractInternationalSignals, sanitizeUserInstruction } from "./locale-intents.js";
 
 /** Explicit user requirements only. No LLM classification or inferred goals. */
 export interface TaskContract {
@@ -8,6 +9,8 @@ export interface TaskContract {
   requiresSourceReview: boolean;
   requiredVerifications: Array<"test" | "build" | "typecheck" | "lint" | "audit">;
   requiresExplicitCompletion: boolean;
+  /** Optional locale of explicit multilingual signals. Not a universal language detector. */
+  signalLocale?: string;
 }
 
 function userText(message: SessionMessage): string {
@@ -35,7 +38,7 @@ const REVIEW =
 const CONTINUE =
   /(?:\b(?:until|restart|repeat|rerun|re-run|again|each\s+(?:time|round)|every\s+(?:time|round))\b|\b(?:tekrar|yeniden|baştan|her\s+(?:turda|tura|seferinde|hata)|kalmayana|bulmayana)\b)/iu;
 const NEGATED_LOOP =
-  /(?:\b(?:do\s+not|don't|dont|never|without|stop)\s+(?:repeat|restart|rerun|re-run|again)\b|\b(?:tekrarlama|tekrarlamayın|tekrar\s+başlama|yeniden\s+başlama|baştan\s+başlama)\b)/iu;
+  /(?:\b(?:do\s+not|don't|dont|never|without|stop)\s+(?:repeat|restart|rerun|re-run|again)\b|\b(?:tekrarlama|tekrarlamayın|tekrar\s+etme|tekrar\s+başla(?:t)?ma|yeniden\s+başla(?:t)?ma|baştan\s+başla(?:t)?ma)\b)/iu;
 
 /** Questions about a possible workflow are not instructions to execute it. */
 export function isExploratoryPrompt(text: string): boolean {
@@ -59,17 +62,58 @@ const VERIFICATION_REQUESTS: Array<{
   { kind: "audit", expression: /(?:\b(?:run|execute)\s+(?:the\s+)?(?:security\s+)?audit\b|\b(?:npm\s+audit|güvenlik\s+denetimi)\s+(?:çalıştır|çalıştırın|yap|yapın)\b)/iu },
 ];
 
+/** Optional, human-authored typed protocol when free-form intent is unclear. */
+export interface ExplicitTaskDirective {
+  mode: "iterative-review" | "one-pass";
+  review: "source" | "checks";
+  verify: TaskContract["requiredVerifications"];
+}
+
+/** Only an exact first-line directive is accepted; examples in code do not count. */
+export function parseExplicitTaskDirective(text: string): ExplicitTaskDirective | undefined {
+  const firstLine = text.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  const prefix = "@guardian-task ";
+  if (!firstLine.startsWith(prefix) || firstLine.length > 800) return undefined;
+  try {
+    const value: unknown = JSON.parse(firstLine.slice(prefix.length));
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const item = value as Record<string, unknown>;
+    if (Object.keys(item).some((key) => !["mode", "review", "verify"].includes(key))) {
+      return undefined;
+    }
+    if (item.mode !== "iterative-review" && item.mode !== "one-pass") return undefined;
+    if (item.review !== "source" && item.review !== "checks") return undefined;
+    if (!Array.isArray(item.verify) || item.verify.length > 5 ||
+        item.verify.some((kind) => !["test", "build", "typecheck", "lint", "audit"].includes(kind))) {
+      return undefined;
+    }
+    return {
+      mode: item.mode,
+      review: item.review,
+      verify: [...new Set(item.verify)] as ExplicitTaskDirective["verify"],
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function deniedVerification(
+  text: string,
+  kind: TaskContract["requiredVerifications"][number]
+): boolean {
+  const target = kind === "test" ? "tests?" : kind;
+  const denied = new RegExp(
+    `\\b(?:do\\s+not|don't|dont|without|never)\\s+(?:run|execute)\\s+(?:the\\s+)?${target}\\b|\\b${kind === "test" ? "testleri?" : kind}\\s+(?:çalıştırma|çalıştırmayın|yapma|yapmayın)\\b`,
+    "iu"
+  );
+  return denied.test(text);
+}
+
 function explicitVerifications(text: string): TaskContract["requiredVerifications"] {
   return VERIFICATION_REQUESTS
-    .filter(({ kind, expression }) => {
-      if (!expression.test(text)) return false;
-      const target = kind === "test" ? "tests?" : kind;
-      const denied = new RegExp(
-        `\\b(?:do\\s+not|don't|dont|without|never)\\s+(?:run|execute)\\s+(?:the\\s+)?${target}\\b|\\b${kind === "test" ? "testleri?" : kind}\\s+(?:çalıştırma|çalıştırmayın|yapma|yapmayın)\\b`,
-        "iu"
-      );
-      return !denied.test(text);
-    })
+    .filter(({ kind, expression }) =>
+      expression.test(text) && !deniedVerification(text, kind)
+    )
     .map(({ kind }) => kind);
 }
 
@@ -80,21 +124,47 @@ export function extractTaskContract(
   if (!human) return undefined;
   const text = userText(human).trim();
   if (!text) return undefined;
-  const exploratory = isExploratoryPrompt(text);
+  const directive = parseExplicitTaskDirective(text);
+  const body = sanitizeUserInstruction(text.startsWith("@guardian-task ")
+    ? text.slice(text.indexOf("\n") < 0 ? text.length : text.indexOf("\n") + 1).trim()
+    : text);
+  const exploratory = isExploratoryPrompt(body);
+  const international = extractInternationalSignals(body);
+  const negations = extractInternationalNegations(body);
+  const negatedLoop = NEGATED_LOOP.test(body) || negations.iteration;
   const iterativeReview =
     !exploratory &&
-    !NEGATED_LOOP.test(text) &&
-    ITERATION.test(text) &&
-    REVIEW.test(text) &&
-    CONTINUE.test(text);
-  const requiredVerifications = exploratory ? [] : explicitVerifications(text);
+    !negatedLoop &&
+    (directive
+      ? directive.mode === "iterative-review"
+      : international?.iterativeReview === true ||
+        (ITERATION.test(body) && REVIEW.test(body) && CONTINUE.test(body)));
+  const requestedVerifications = exploratory
+    ? []
+    : directive
+      ? directive.verify
+      : [...new Set([
+        ...explicitVerifications(body),
+        ...(international?.requiredVerifications ?? []),
+      ])];
+  // A contradictory natural-language prohibition cannot be overridden by a
+  // machine-readable header. Prefer no extra duty to an invented mandate.
+  const requiredVerifications = requestedVerifications.filter((kind) =>
+    !(kind === "test" && negations.test) &&
+    !deniedVerification(body, kind)
+  );
   return {
     turnKey: human.info.id ?? "no-human-user",
-    explicitAction: (!exploratory && ACTION_REQUEST.test(text)) || iterativeReview,
+    explicitAction: Boolean(directive) ||
+      ((!exploratory && ACTION_REQUEST.test(body)) ||
+        (international?.explicitAction ?? false) || iterativeReview),
     iterativeReview,
-    requiresSourceReview: iterativeReview && SOURCE_REVIEW.test(text),
+    requiresSourceReview: iterativeReview &&
+      (directive ? directive.review === "source" :
+        SOURCE_REVIEW.test(body) || international?.requiresSourceReview === true),
     requiredVerifications,
     requiresExplicitCompletion: iterativeReview || requiredVerifications.length > 0,
+    signalLocale: directive ? "structured" : international?.locale,
   };
 }
 

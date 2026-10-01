@@ -17,6 +17,8 @@ export * from "./rules/destructive-operations.js";
 export * from "./evidence.js";
 export * from "./state.js";
 export * from "./task-contract.js";
+export * from "./locale-intents.js";
+export * from "./task-policy.js";
 export * from "./rules/task-completion.js";
 export * from "./rules/instruction-fidelity.js";
 export * from "./prose.js";

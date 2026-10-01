@@ -1,5 +1,6 @@
 import { currentHumanMessage, isExploratoryPrompt } from "../task-contract.js";
 import { sanitizeProseForInspection } from "../prose.js";
+import { detectInternationalHistoricalRefusal } from "../locale-intents.js";
 const ACTION = /\b(?:implement|fix|change|modify|build|develop|resume|continue|write|create|add|update|complete|do|start)\b|\b(?:yap|yapın|uygula|uygulayın|düzelt|düzeltin|geliştir|geliştirin|devam\s+et|başla|başlayın|ekle|ekleyin|oluştur|tamamla|tamamlayın|yaz|yazın)\b/iu;
 const NEGATED_ACTION = /\b(?:do\s+not|don't|dont|never)\s+(?:implement|fix|change|build|develop|resume|continue|write|create|add|update|complete|do|start)\b|\b(?:yapma|yapmayın|uygulama|uygulamayın|düzeltme|düzeltmeyin|geliştirme|geliştirmeyin)\b/iu;
 const PREVIOUS_DECISION = /\b(?:previously|earlier|before|last\s+time|already)\b[^.!?]{0,120}\b(?:pause|paused|suspend(?:ed)?|defer(?:red)?|postpone(?:d)?|cancel(?:ed)?|on\s+hold)\b|\b(?:önceden|daha\s+önce|eskiden)\b[^.!?]{0,120}\b(?:askıya\s+al|erteled|durdur|iptal|vazgeç)\w*/iu;
@@ -20,25 +21,33 @@ export const instructionFidelityRule = {
             .map((part) => part.text ?? "")
             .join("\n") ?? "";
         const prose = sanitizeProseForInspection(assistant);
-        if (!ACTION.test(instruction) ||
-            isExploratoryPrompt(instruction) ||
-            NEGATED_ACTION.test(instruction) ||
-            !PREVIOUS_DECISION.test(prose) ||
-            !REFUSAL.test(prose)) {
+        const international = detectInternationalHistoricalRefusal(instruction, prose);
+        const originalPattern = ACTION.test(instruction) &&
+            !isExploratoryPrompt(instruction) &&
+            !NEGATED_ACTION.test(instruction) &&
+            PREVIOUS_DECISION.test(prose) &&
+            REFUSAL.test(prose);
+        if (!originalPattern && !international) {
             return { ruleId: this.id, decision: "pass", findings: [] };
         }
+        // If the agent actually modified files, a multilingual refusal might
+        // refer to a different part of the work. Report it, do not auto-retry.
+        const performedAction = context.evidence?.fileMutations.some((record) => record.status === "success") ?? false;
+        const advisory = Boolean(international && performedAction && !originalPattern);
         const finding = {
             ruleId: this.id,
-            pattern: "past decision overrides current instruction",
+            pattern: international
+                ? `past decision overrides current instruction (${international})`
+                : "past decision overrides current instruction",
             messageSnippet: prose.slice(0, 200),
             description: "The assistant explicitly declined the current requested action on the basis of an earlier user decision. The latest explicit instruction must be considered; an actual conflict should be explained rather than silently changing scope.",
-            confidence: "high",
+            confidence: advisory ? "medium" : "high",
         };
         return {
             ruleId: this.id,
-            decision: "block",
+            decision: advisory ? "pass" : "block",
             findings: [finding],
-            remediationPrompt: "Re-evaluate the current explicit user request. Do not treat an earlier pause or deferral as a permanent prohibition. Perform the requested work if otherwise permitted; if a genuine conflict prevents it, identify the conflicting instruction precisely and ask the user rather than silently declining.",
+            remediationPrompt: advisory ? undefined : "Re-evaluate the current explicit user request. Do not treat an earlier pause or deferral as a permanent prohibition. Perform the requested work if otherwise permitted; if a genuine conflict prevents it, identify the conflicting instruction precisely and ask the user rather than silently declining.",
         };
     },
 };

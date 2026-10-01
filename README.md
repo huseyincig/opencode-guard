@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OpenCode: v1 & v2](https://img.shields.io/badge/OpenCode-v1%20%26%20v2%20Compatible-blue.svg)](https://github.com/huseyincig/opencode-guardian)
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
-[![Tests: 100% Pass](https://img.shields.io/badge/Tests-150%2F150%20Passing-brightgreen.svg)](tests/)
+[![Tests: 100% Pass](https://img.shields.io/badge/Tests-267%2F267%20Passing-brightgreen.svg)](tests/)
 
 A universal, high-performance quality and safety guardian plugin for **OpenCode** AI agents.
 
@@ -177,7 +177,22 @@ For a task-focused configuration, the older conversation-style rules can be chan
 
 When the latest genuine user prompt **explicitly** requests a repeated debug/review, Guardian builds a task contract for that human turn. It guides the agent before its model request and checks the observed tools at `session.idle`. A source-review loop requires a new, nonempty source inspection **after** the last change; a test-only loop can be supported by a successful later test run. Omitted or ambiguous evidence remains advisory where a direct contradiction cannot be established. A concrete blocker is reported instead of causing an infinite retry.
 
-This is a **conservative heuristic**, not semantic proof that every file was examined or that all requirements were met. The host must actually deliver the hooks; some V2 beta versions have reported broken event/context delivery. See [the V1/V2 task-contract design and verified API references](docs/task-contract-v1-v2.md) for architecture, limitations, and the next implementation phases.
+This is a **conservative heuristic**, not semantic proof that every file was examined or that all requirements were met. The host must actually deliver the hooks; some V2 beta versions have reported broken event/context delivery. See [the V1/V2 task-contract design](docs/task-contract-v1-v2.md) and [source-verified international policy design](docs/international-policy.md) for architecture, sources, limitations and proposed AST/OPA extensions.
+
+---
+
+## 🌍 International, language-neutral task decisions
+
+English and Turkish task extraction now has conservative signal support for **Spanish, Portuguese, French, German, Russian, Arabic, Hindi, Chinese, Japanese, Korean and Indonesian**. These identify explicit actions, repeated review, negation, requested tests, historical refusal, completion reports and blockers. They are **not** universal language understanding or an exhaustive list of paraphrases.
+
+Every supported language produces the same typed task contract; `evaluateTaskPolicy` makes the actual task/verification decision from **structured tool evidence**, not from the detected language. Missing or ambiguous evidence is not accepted as a proven success. The optional first-line directive below gives deterministic task conditions even in unsupported languages:
+
+```text
+@guardian-task {"mode":"iterative-review","review":"source","verify":["test"]}
+[Write the task in any language.]
+```
+
+The header is optional, accepts only the documented fields, and does not grant tool permissions or authorize a release. Recognized explicit prohibitions in the body override conflicting directives. See [international architecture and source review](docs/international-policy.md).
 
 ---
 
@@ -213,7 +228,7 @@ flowchart TD
 ## 🧪 Testing & Verification
 
 ```bash
-# Build + 150 unit/regression tests
+# Build + 267 unit/regression tests
 npm test
 
 # Typecheck TypeScript sources
@@ -246,7 +261,9 @@ opencode-guardian/
 │   ├── engine.ts            # Rule orchestration + remediation budget
 │   ├── evidence.ts          # Tool/evidence normalization + error fingerprints
 │   ├── state.ts             # Remediation/continuation budgets per human turn
-│   ├── task-contract.ts     # Explicit task extraction and post-change review evidence
+│   ├── task-contract.ts     # Explicit task extraction and optional typed directive
+│   ├── locale-intents.ts    # Conservative multilingual signals
+│   ├── task-policy.ts       # Language-neutral evidence and completion policy
 │   ├── prose.ts             # Prose normalization
 │   ├── tool-input.ts        # Common shell/file mutation extraction
 │   ├── types.ts
@@ -255,7 +272,11 @@ opencode-guardian/
 │   ├── smoke-test.mjs
 │   └── comprehensive-test.mjs
 ├── tests/
-│   └── guard.test.mjs       # 150 unit/regression tests
+│   ├── guard.test.mjs       # Existing rules and V1/V2 host simulations
+│   ├── multilingual-task.test.mjs  # International positive/negative tests
+│   ├── structured-task.test.mjs    # Exact directive validation
+│   ├── international-adapters.test.mjs # V1/V2 locale hook simulations
+│   └── task-policy.test.mjs        # Language-neutral policy tests
 ├── index.js
 ├── server.js
 ├── package.json
