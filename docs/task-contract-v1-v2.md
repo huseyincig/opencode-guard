@@ -1,6 +1,6 @@
 # Task contract and OpenCode V1/V2 adapter design
 
-This is the implementation design for **unreleased** Guardian task controls on `main`. It is not a claim that the feature is available in the existing npm package or GitHub release. Publication and versioning are separate, manual decisions.
+This describes the implemented task controls and V1/V2 adapters in the **v0.4.0 source tree**. Preparing the repository does not imply that v0.4.0 is already published to npm or that a GitHub release exists. The maintainer controls publication.
 
 ## Primary, dated sources
 
@@ -24,7 +24,7 @@ For the separately implemented 11-language signal packs, the exact first-line di
 | Resolve session directory | V1 plugin's known project directory | Prefer `ctx.session.get({sessionID}).location.directory`; fall back to `ctx.location.directory` |
 | Unload | V1 hook lifecycle | Abort the event stream and dispose registered hook handles |
 
-OpenCode V2 partial or transition contexts are deliberately ignored if the required event/session capabilities are absent. Optional task hooks may fail independently without disabling the existing idle path. A successful registration does **not** guarantee that a beta host actually delivers its events.
+OpenCode V2 partial or transition contexts are ignored if required event/session capabilities are absent **only when strict preflight is off**. When `preflight.enabled` is true and the plugin is enabled, incomplete host context, invalid/unavailable event subscription or missing/invalid tool hook registration triggers an explicit setup error instead of silently disabling protection. Optional task hooks may fail independently without disabling an otherwise available idle path. A successful registration does **not** guarantee actual event delivery.
 
 ## Contract and state algorithm
 
@@ -40,7 +40,7 @@ OpenCode V2 partial or transition contexts are deliberately ignored if the requi
 
 - The contract is a conservative **deterministic extractor**, not a universal natural-language interpreter. Ambiguous or unsupported instructions are not silently invented. When needed, use a more explicit user prompt.
 - Post-change source inspection recognizes successful, nonempty `read_file` / `view_file` / `file.read` results and substantive source-bearing search/diff results. File-name-only `glob`/`find`/`file_search` output and `git diff --stat` do not prove inspection. A single successful read is observable post-change inspection, **not proof that an entire repository was comprehensively audited**. The agent's claim of a completely clean codebase is never mathematically guaranteed by this plugin.
-- The normal Guardian destructive-operation rule runs **after** a tool completes, not as a pre-execution barrier. This implementation does **not** add a default pre-execution blocker or change user permission rules.
+- The normal Guardian destructive-operation rule runs **after** a tool completes, at default `warn` severity. It checks recognized destructive forms and plain `rm` target authorization; merely asking about deletion does not grant permission. The optional **strict preflight** (`preflight.enabled: true`, disabled by default) uses V1 `tool.execute.before` or V2 `ctx.tool.hook("execute.before")` to reject selected risky calls before execution, regardless of user consent. It is not a complete shell parser, permission system, or host sandbox.
 - V1's system transformation is an experimental hook. V2 `prompt` and `context` are different boundaries; a hook registration can succeed while affected beta versions still fail to deliver runtime events. Confirm on the actual intended host before release.
 - Synthetic continuation is bounded rather than unconditionally repeating until the model says the task is complete. This prevents a plugin-induced infinite loop; the user may request additional iterations when the budget is exhausted.
 - Existing conversation-style rules retain their configurable severities. To prioritize task completion without blocking on stylistic phrases, set `discipline/no-apology`, `discipline/no-evasion`, or `quality/no-shortcuts` to `warn` explicitly.
@@ -49,5 +49,5 @@ OpenCode V2 partial or transition contexts are deliberately ignored if the requi
 
 - Rich, user-confirmed structured task scopes for complex multi-part requirements; the current optional first-line directive supports a small typed contract, not a full per-file scope manifest.
 - Richer per-file coverage and before/after diff evidence for a genuinely verifiable complete audit.
-- Optional, separately authorized **pre-tool** checks using V1 `tool.execute.before` and V2 `ctx.tool.hook("execute.before")`; keep default fail-open and avoid unsafe blanket command blocking.
-- Real-host integration tests against the exact OpenCode V1 and V2 binary builds in which the plugin will be deployed, including event loss and session interruption.
+- Expand the already implemented, opt-in pre-tool checks beyond recognized shell tool names and command fields, with explicit host capability tests, narrowly scoped authorization where appropriate, and careful false-positive controls.
+- Repeat live integration tests on the exact **v0.4.0** package with OpenCode V1 and test the V2 adapter on a separate real V2 host, including event loss, preflight rejection and session interruption. The earlier live V1 run used an earlier code revision; V2 is currently mock-tested only.

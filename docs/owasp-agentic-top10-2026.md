@@ -1,6 +1,6 @@
 # OWASP Agentic Top 10 (2026): Guardian coverage and limits
 
-Assessment date: 2026-10-01. This is a **capability and gap map**, not an OWASP certification, compliance attestation, threat-model substitute, or claim of complete mitigation.
+Source snapshot: **v0.4.0 release candidate**, 2026-10-01. This is a **capability and gap map**, not an OWASP certification, compliance attestation, threat-model substitute, or claim of complete mitigation. The source version does not imply npm publication.
 
 Sources: [OWASP Agentic Top 10 (December 2025)](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) and the [OWASP release explanation](https://genai.owasp.org/2025/12/09/owasp-top-10-for-agentic-applications-the-benchmark-for-agentic-security-in-the-age-of-autonomous-ai/).
 
@@ -10,7 +10,7 @@ Sources: [OWASP Agentic Top 10 (December 2025)](https://genai.owasp.org/resource
 | --- | --- | --- |
 | **ASI01 – Agent Goal Hijack** | Task contracts use human messages; synthetic messages and quoted instruction examples are filtered from some intent extraction. Instruction-fidelity checks some contradictions. | No general prompt-injection detection, trusted-data provenance, or guarantee that tool output cannot redirect a model. |
 | **ASI02 – Tool Misuse** | Post-turn destructive-operation findings; optional strict preflight rejects selected high-risk shell patterns and plain file removal before execution. Target-aware post-turn deletion review prevents some permission-scope expansion. | Post-turn findings are advisory at default severity. Preflight is opt-in, applies to known shell-tool names and supported command shapes, and is not a comprehensive tool-policy engine. |
-| **ASI03 – Identity & Privilege Abuse** | Post-turn deletion review now requires literal path-specific consent and does not treat ordinary removal consent as permission to use sudo. | No actor authentication, credential scope enforcement, privilege sandbox, or authorization service. Preflight does not authenticate a human's identity. |
+| **ASI03 – Identity & Privilege Abuse** | Post-turn deletion review checks literal path-specific consent, refuses unrequested `sudo`, and does not interpret questions about deletion as permission. | No actor authentication, credential scope enforcement, privilege sandbox, or authorization service. Preflight does not authenticate a human's identity. |
 | **ASI04 – Agentic Supply Chain** | The no-ghost-deps rule cross-checks imports against selected dependency manifests. CI runs npm audit. | No dependency signature/provenance, lockfile trust, package integrity verification, MCP tool signing, or external-plugin vetting. |
 | **ASI05 – Unexpected Code Execution** | Optional preflight detects selected destructive shell forms (including paired active backtick substitutions and plain `rm`) and opaque decoded shell pipelines. | No complete shell interpreter, sandbox, dynamic code analysis, or universal execution interception. Arbitrary interpreters and renamed tools remain outside the proven scope. |
 | **ASI06 – Memory & Context Poisoning** | Some synthetic messages and quoted text are excluded from task-intent interpretation. | No persistent-memory integrity checking, retrieval provenance, tool-result trust separation, or untrusted-context quarantine. |
@@ -21,13 +21,13 @@ Sources: [OWASP Agentic Top 10 (December 2025)](https://genai.owasp.org/resource
 
 ## Evidence and reproducible checks
 
-- [src/preflight.ts](../src/preflight.ts) and [tests/preflight.test.mjs](../tests/preflight.test.mjs): opt-in V1/V2 shell pre-execution checks and host-hook behavior.
-- [src/rules/destructive-operations.ts](../src/rules/destructive-operations.ts), [tests/owasp-scope-regression.test.mjs](../tests/owasp-scope-regression.test.mjs), and [tests/guardfall-regression.test.mjs](../tests/guardfall-regression.test.mjs): post-turn authorization findings, literal path scoping, and selected shell-pattern regression cases.
+- [src/preflight.ts](../src/preflight.ts), [src/index.ts](../src/index.ts), [tests/preflight.test.mjs](../tests/preflight.test.mjs), and [tests/security-audit-regression.test.mjs](../tests/security-audit-regression.test.mjs): opt-in V1/V2 shell pre-execution checks, strict V2 setup error handling, and mock-host behavior.
+- [src/rules/destructive-operations.ts](../src/rules/destructive-operations.ts), [tests/owasp-scope-regression.test.mjs](../tests/owasp-scope-regression.test.mjs), [tests/guardfall-regression.test.mjs](../tests/guardfall-regression.test.mjs), and [tests/security-gap-regression.test.mjs](../tests/security-gap-regression.test.mjs): post-turn authorization findings, literal path scoping, and selected shell-pattern regression cases.
 - [src/task-contract.ts](../src/task-contract.ts) and [tests/report-followup-regression.test.mjs](../tests/report-followup-regression.test.mjs): task extraction and limits on what counts as review evidence.
 - [src/rules/no-ghost-deps.ts](../src/rules/no-ghost-deps.ts) and [src/rules/no-secrets.ts](../src/rules/no-secrets.ts): narrow dependency and hardcoded-secret checks; neither performs supply-chain or identity verification.
 - [src/rules/circuit-breaker.ts](../src/rules/circuit-breaker.ts), [src/rules/no-unverified-claims.ts](../src/rules/no-unverified-claims.ts), and [src/rules/task-completion.ts](../src/rules/task-completion.ts): bounded retries, selected claim checks, and task completion logic.
 
-Tests exercise mock OpenCode host adapters and isolated sandbox scenarios; they do not establish complete risk coverage or prove production behavior for every OpenCode build.
+The v0.4.0 source has unit/mock-host and isolated sandbox coverage; the earlier live OpenCode V1 1.18.34 run used v0.3.0-era code. Live V1 revalidation of this package and any real V2 host integration are still outstanding. These checks do not establish complete risk coverage or prove production behavior for every OpenCode build.
 
 ## Deployment controls outside this plugin
 

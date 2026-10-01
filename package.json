@@ -1,6 +1,6 @@
 {
   "name": "opencode-guardian",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Universal quality and safety guardian plugin for OpenCode AI agents (Dual-Mode: OpenCode v1 & v2)",
   "type": "module",
   "main": "./dist/index.js",
@@ -17,6 +17,7 @@
   },
   "files": [
     "dist",
+    "docs",
     "README.md",
     "LICENSE",
     "index.js",
