@@ -4,6 +4,7 @@ import { GuardEngine, loadConfig } from "./engine.js";
 import type { MessagePart, SessionMessage } from "./types.js";
 import { extractTaskContract, taskGuidance } from "./task-contract.js";
 import type { TaskContract } from "./task-contract.js";
+import { enforcePreflight } from "./preflight.js";
 
 export * from "./types.js";
 export * from "./engine.js";
@@ -27,6 +28,7 @@ export * from "./task-policy.js";
 export * from "./rules/task-completion.js";
 export * from "./rules/instruction-fidelity.js";
 export * from "./prose.js";
+export * from "./preflight.js";
 
 function stringifyV2ToolContent(content: unknown): string {
   if (!Array.isArray(content)) return "";
@@ -180,6 +182,11 @@ const server: OpenCodeV1ServerPlugin = async ({ client, directory }) => {
   let promptSequence = 0;
 
   return {
+    ...(config.enabled !== false && config.preflight?.enabled === true ? {
+      "tool.execute.before": async (
+        input: { tool: string }, output: { args: unknown }
+      ) => enforcePreflight(input.tool, output.args),
+    } : {}),
     "chat.message": async (input, output) => {
       const text = output.parts
         .map((part) => part.type === "text" ? part.text : "")
@@ -293,6 +300,26 @@ const setup: OpenCodeV2.Plugin["setup"] = async (
   const engine = new GuardEngine(config);
   const contracts = new Map<string, TaskContract>();
   const registrations: Array<{ dispose(): Promise<void> | void }> = [];
+
+  if (config.enabled !== false && config.preflight?.enabled === true) {
+    // An explicitly requested security hook must never be silently skipped.
+    if (typeof context.tool?.hook !== "function") {
+      controller.abort();
+      throw new Error("[opencode-guardian preflight] V2 tool.execute.before hook is unavailable; strict preflight cannot be enabled.");
+    }
+    try {
+      const registration = await context.tool.hook("execute.before", (event) => {
+        enforcePreflight(event.tool, event.input);
+      });
+      if (!registration || typeof registration.dispose !== "function") {
+        throw new Error("V2 tool hook did not return a valid registration.");
+      }
+      registrations.push(registration);
+    } catch (error) {
+      controller.abort();
+      throw new Error("[opencode-guardian preflight] V2 tool hook registration failed; strict preflight cannot be enabled.", { cause: error });
+    }
+  }
 
   if (typeof context.session.hook === "function") {
     try {

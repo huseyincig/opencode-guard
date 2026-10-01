@@ -17,6 +17,8 @@ export interface GuardConfig {
   remediationBudget?: number;
   /** Separate, bounded continuation budget for explicit iterative tasks (0..5). */
   iterationBudget?: number;
+  /** Optional strict tool hook; disabled unless explicitly enabled. */
+  preflight?: { enabled?: boolean };
   rules?: {
     "discipline/no-evasion"?: Severity | GuardRuleConfig;
     "discipline/no-apology"?: Severity | GuardRuleConfig;
