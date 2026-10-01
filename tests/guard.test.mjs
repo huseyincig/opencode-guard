@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { GuardEngine } from "../dist/engine.js";
+import { GuardEngine, REMEDIATION_MARKER } from "../dist/engine.js";
 import { noEvasionRule } from "../dist/rules/no-evasion.js";
 import { noShortcutsRule } from "../dist/rules/no-shortcuts.js";
 import { noStubsRule } from "../dist/rules/no-stubs.js";
@@ -13,6 +13,10 @@ import { noSecretsRule } from "../dist/rules/no-secrets.js";
 import { noGhostDepsRule, clearDeclaredDepsCache } from "../dist/rules/no-ghost-deps.js";
 import { circuitBreakerRule } from "../dist/rules/circuit-breaker.js";
 import { noApologyRule } from "../dist/rules/no-apology.js";
+import { noUnverifiedClaimsRule } from "../dist/rules/no-unverified-claims.js";
+import { noSilentFailureRule } from "../dist/rules/no-silent-failure.js";
+import { destructiveOperationsRule } from "../dist/rules/destructive-operations.js";
+import { collectTurnEvidence, normalizeErrorFingerprint } from "../dist/evidence.js";
 
 // --- 1. discipline/no-evasion ---
 test("discipline/no-evasion rule detects dismissal phrases", () => {
@@ -182,7 +186,7 @@ test("testing/no-cheat rule detects it.skip in test files", () => {
     sessionID: "test-sess",
     directory: "/tmp",
     messages: [],
-    ruleConfig: {},
+    ruleConfig: { blockStructuralTestChanges: true },
     currentTurn: [
       {
         info: { id: "msg-1", role: "assistant" },
@@ -213,7 +217,7 @@ test("testing/no-cheat rule detects commented-out expect/assert in test files", 
     sessionID: "test-sess",
     directory: "/tmp",
     messages: [],
-    ruleConfig: {},
+    ruleConfig: { blockStructuralTestChanges: true },
     currentTurn: [
       {
         info: { id: "msg-1", role: "assistant" },
@@ -253,7 +257,7 @@ test("security/no-secrets rule detects hardcoded OpenAI and GitHub tokens", () =
             state: {
               input: {
                 filePath: "src/client.ts",
-                content: "const token = 'ghp_111122223333444455556666777788889999';\nconst aiKey = 'sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCD';",
+                content: "const token = 'ghp_" + "111122223333444455556666777788889999';\nconst aiKey = 'sk-" + "proj-abcdefghijklmnopqrstuvwxyz0123456789ABCD';",
               },
             },
           },
@@ -284,7 +288,7 @@ test("security/no-secrets rule ignores .env.example files", () => {
             state: {
               input: {
                 filePath: ".env.example",
-                content: "GITHUB_TOKEN=ghp_111122223333444455556666777788889999",
+                content: "GITHUB_TOKEN=ghp_" + "111122223333444455556666777788889999",
               },
             },
           },
@@ -1072,7 +1076,7 @@ test("testing/no-cheat recognizes Windows and root-level Python test paths", () 
       sessionID: "test-paths",
       directory: "/tmp",
       messages: [],
-      ruleConfig: {},
+      ruleConfig: { blockStructuralTestChanges: true },
       currentTurn: [
         {
           info: { id: `a-${filePath}`, role: "assistant" },
@@ -1109,7 +1113,10 @@ test("file-mutation rules inspect shell heredoc writes", () => {
     sessionID: "shell-write",
     directory: root,
     messages: [],
-    ruleConfig: {},
+    ruleConfig: {
+      blockStructuralTestChanges: true,
+      blockPythonGhostDeps: true,
+    },
     currentTurn,
   };
 
@@ -1335,4 +1342,2014 @@ test("OpenCode v2 setup silently no-ops on partial v2 contexts", async () => {
   } finally {
     console.error = originalError;
   }
+});
+
+
+function makeEvidenceContext(parts, text = "") {
+  const currentTurn = [
+    { info: { id: "u-evidence", role: "user" }, parts: [{ type: "text", text: "verify it" }] },
+    {
+      info: { id: "a-evidence", role: "assistant" },
+      parts: [...parts, ...(text ? [{ type: "text", text }] : [])],
+    },
+  ];
+  return {
+    sessionID: "evidence-session",
+    directory: process.cwd(),
+    messages: currentTurn,
+    currentTurn,
+    ruleConfig: {},
+    evidence: collectTurnEvidence(currentTurn),
+  };
+}
+
+test("evidence collector classifies verification commands and preserves explicit exit codes", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "npm test" },
+        output: "ok",
+        metadata: { exit: 0 },
+      },
+    },
+    {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "npm audit" },
+        output: "audit failed",
+        metadata: { exit: 1 },
+      },
+    },
+  ]);
+
+  const testEvidence = context.evidence.records.find((record) => record.kind === "test");
+  const auditEvidence = context.evidence.records.find((record) => record.kind === "audit");
+  assert.equal(testEvidence.status, "success");
+  assert.equal(testEvidence.exitCode, 0);
+  assert.equal(auditEvidence.status, "failure");
+  assert.equal(auditEvidence.exitCode, 1);
+});
+
+test("integrity/no-unverified-claims accepts a success claim backed by tool evidence", () => {
+  const context = makeEvidenceContext(
+    [
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "npm test" },
+          output: "53 passing",
+          metadata: { exit: 0 },
+        },
+      },
+    ],
+    "All tests passed."
+  );
+  const result = noUnverifiedClaimsRule.inspect(context);
+  assert.equal(result.decision, "pass");
+  assert.equal(result.findings.length, 0);
+});
+
+test("integrity/no-unverified-claims blocks a claim contradicted by the latest tool result", () => {
+  const context = makeEvidenceContext(
+    [
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "npm test" },
+          output: "1 failing",
+          metadata: { exit: 1 },
+        },
+      },
+    ],
+    "All tests pass."
+  );
+  const result = noUnverifiedClaimsRule.inspect(context);
+  assert.equal(result.decision, "block");
+  assert.equal(result.findings[0].confidence, "high");
+  assert.match(result.remediationPrompt, /contradictory completion claim/i);
+});
+
+test("integrity/no-unverified-claims does not block an unsupported claim by default", () => {
+  const context = makeEvidenceContext([], "The build succeeded.");
+  const result = noUnverifiedClaimsRule.inspect(context);
+  assert.equal(result.decision, "pass");
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].confidence, "medium");
+});
+
+test("integrity/no-unverified-claims permits explicit uncertainty and hypotheses", () => {
+  for (const text of [
+    "Tests probably pass, but I haven't run them.",
+    "I suspect the bug is fixed, but I cannot verify it in this environment.",
+    "Sanırım testler geçti ama çalıştırmadım.",
+  ]) {
+    const context = makeEvidenceContext([], text);
+    const result = noUnverifiedClaimsRule.inspect(context);
+    assert.equal(result.decision, "pass", text);
+    assert.equal(result.findings.length, 0, text);
+  }
+});
+
+test("discipline/no-evasion accepts pre-existing claims after a successful baseline check", () => {
+  const context = makeEvidenceContext(
+    [
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "git show origin/main:src/index.ts" },
+          output: "existing source",
+          metadata: { exit: 0 },
+        },
+      },
+    ],
+    "This is a pre-existing issue."
+  );
+  const result = noEvasionRule.inspect(context);
+  assert.equal(result.decision, "pass");
+});
+
+test("integrity/no-silent-failure blocks masked verification exit status", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "npm test || true" },
+        output: "",
+        metadata: { exit: 0 },
+      },
+    },
+  ]);
+  const result = noSilentFailureRule.inspect(context);
+  assert.equal(result.decision, "block");
+  assert.equal(result.findings[0].confidence, "high");
+});
+
+test("integrity/no-silent-failure treats empty catch as advisory unless strict", () => {
+  const parts = [
+    {
+      type: "tool",
+      state: {
+        status: "completed",
+        input: {
+          path: "src/cache.ts",
+          content: "try { await cache.refresh(); } catch {}",
+        },
+      },
+    },
+  ];
+  const advisory = makeEvidenceContext(parts);
+  let result = noSilentFailureRule.inspect(advisory);
+  assert.equal(result.decision, "pass");
+  assert.equal(result.findings.length, 1);
+
+  const strict = { ...advisory, ruleConfig: { blockEmptyHandlers: true } };
+  result = noSilentFailureRule.inspect(strict);
+  assert.equal(result.decision, "block");
+});
+
+test("safety/destructive-operations flags unrequested destructive commands", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "git reset --hard HEAD~1" },
+        metadata: { exit: 0 },
+      },
+    },
+  ]);
+  const result = destructiveOperationsRule.inspect(context);
+  assert.equal(result.decision, "block");
+  assert.equal(result.findings[0].confidence, "high");
+});
+
+test("safety/destructive-operations permits explicitly requested destructive action", () => {
+  const currentTurn = [
+    {
+      info: { id: "u-destructive", role: "user" },
+      parts: [{ type: "text", text: "Bu branch'i hard reset ile sıfırla." }],
+    },
+    {
+      info: { id: "a-destructive", role: "assistant" },
+      parts: [
+        {
+          type: "tool",
+          state: {
+            status: "completed",
+            input: { command: "git reset --hard origin/main" },
+            metadata: { exit: 0 },
+          },
+        },
+      ],
+    },
+  ];
+  const context = {
+    sessionID: "destructive-authorized",
+    directory: process.cwd(),
+    messages: currentTurn,
+    currentTurn,
+    ruleConfig: {},
+    evidence: collectTurnEvidence(currentTurn),
+  };
+  assert.equal(destructiveOperationsRule.inspect(context).decision, "pass");
+});
+
+test("testing/no-cheat detects assertion weakening in a test patch", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      state: {
+        input: {
+          patch: [
+            "--- a/tests/value.test.ts",
+            "+++ b/tests/value.test.ts",
+            "-expect(result).toEqual({ ok: true, value: 42 });",
+            "+expect(result).toBeTruthy();",
+          ].join("\n"),
+        },
+      },
+    },
+  ]);
+  const result = noCheatRule.inspect({
+    ...context,
+    ruleConfig: { blockStructuralTestChanges: true },
+  });
+  assert.equal(result.decision, "block");
+  assert.ok(result.findings.some((finding) => finding.pattern === "assertion weakened"));
+});
+
+test("testing/no-cheat allows an equally specific assertion change", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      state: {
+        input: {
+          patch: [
+            "--- a/tests/value.test.ts",
+            "+++ b/tests/value.test.ts",
+            "-expect(result).toEqual({ ok: true });",
+            "+expect(result).toEqual({ ok: true, value: 42 });",
+          ].join("\n"),
+        },
+      },
+    },
+  ]);
+  assert.equal(noCheatRule.inspect(context).decision, "pass");
+});
+
+test("testing/no-cheat detects test deletion and coverage threshold reduction", () => {
+  const deletion = makeEvidenceContext([
+    {
+      type: "tool",
+      state: {
+        input: {
+          path: "tests/broken.test.ts",
+          action: "delete",
+        },
+      },
+    },
+  ]);
+  assert.equal(
+    noCheatRule.inspect({
+      ...deletion,
+      ruleConfig: { blockStructuralTestChanges: true },
+    }).decision,
+    "block"
+  );
+
+  const coverage = makeEvidenceContext([
+    {
+      type: "tool",
+      state: {
+        input: {
+          path: "vitest.config.ts",
+          patch: [
+            "--- a/vitest.config.ts",
+            "+++ b/vitest.config.ts",
+            "-coverage: { lines: 90, functions: 90 }",
+            "+coverage: { lines: 50, functions: 50 }",
+          ].join("\n"),
+        },
+      },
+    },
+  ]);
+  assert.equal(
+    noCheatRule.inspect({
+      ...coverage,
+      ruleConfig: { blockStructuralTestChanges: true },
+    }).decision,
+    "block"
+  );
+});
+
+test("testing/no-cheat keeps snapshot update advisory by default", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      state: {
+        status: "completed",
+        input: { command: "vitest -u" },
+        metadata: { exit: 0 },
+      },
+    },
+  ]);
+  let result = noCheatRule.inspect(context);
+  assert.equal(result.decision, "pass");
+  assert.ok(result.findings.some((finding) => finding.pattern === "snapshot update"));
+
+  result = noCheatRule.inspect({
+    ...context,
+    ruleConfig: { blockSnapshotUpdates: true },
+  });
+  assert.equal(result.decision, "block");
+});
+
+test("security/no-secrets detects npm, GitLab, Google, Stripe and bearer credentials", () => {
+  const cases = [
+    "const x = 'npm_" + "abcdefghijklmnopqrstuvwxyz0123456789ABCD';",
+    "const x = 'glpat-" + "abcdefghijklmnopqrstuvwx';",
+    "const x = 'AI" + "za12345678901234567890123456789012345';",
+    "const x = 'sk_" + "live_abcdefghijklmnopqrstuvwxyz123456';",
+    "const h = 'Authorization: Bearer " + "abcdefghijklmnopqrstuvwxyz0123456789';",
+  ];
+
+  for (const content of cases) {
+    const context = makeEvidenceContext([
+      {
+        type: "tool",
+        state: { input: { path: "src/secret.ts", content } },
+      },
+    ]);
+    assert.equal(noSecretsRule.inspect(context).decision, "block", content);
+  }
+});
+
+test("manifest/no-ghost-deps supports Python pyproject dependencies and local modules", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-python-deps-"));
+  try {
+    fs.writeFileSync(
+      path.join(root, "pyproject.toml"),
+      '[project]\ndependencies = ["requests>=2.0"]\n'
+    );
+    fs.mkdirSync(path.join(root, "src", "localpkg"), { recursive: true });
+    fs.writeFileSync(path.join(root, "src", "localpkg", "__init__.py"), "");
+    clearDeclaredDepsCache();
+
+    const okContext = {
+      sessionID: "python-ok",
+      directory: root,
+      messages: [],
+      ruleConfig: {},
+      currentTurn: [
+        {
+          info: { id: "a-python-ok", role: "assistant" },
+          parts: [
+            {
+              type: "tool",
+              state: {
+                input: {
+                  path: path.join(root, "src", "app.py"),
+                  content: "import requests\nimport localpkg\nimport json\n",
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+    assert.equal(noGhostDepsRule.inspect(okContext).decision, "pass");
+
+    const badContext = structuredClone(okContext);
+    badContext.sessionID = "python-bad";
+    badContext.currentTurn[0].parts[0].state.input.content = "import httpx\n";
+
+    const advisory = noGhostDepsRule.inspect(badContext);
+    assert.equal(advisory.decision, "pass");
+    assert.equal(advisory.findings.length, 1);
+    assert.equal(advisory.findings[0].confidence, "medium");
+
+    const strict = noGhostDepsRule.inspect({
+      ...badContext,
+      ruleConfig: { blockPythonGhostDeps: true },
+    });
+    assert.equal(strict.decision, "block");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("manifest/no-ghost-deps supports Go modules", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-go-deps-"));
+  try {
+    fs.writeFileSync(
+      path.join(root, "go.mod"),
+      "module example.com/app\n\ngo 1.23\n\nrequire github.com/google/uuid v1.6.0\n"
+    );
+
+    const context = {
+      sessionID: "go-deps",
+      directory: root,
+      messages: [],
+      ruleConfig: {},
+      currentTurn: [
+        {
+          info: { id: "a-go", role: "assistant" },
+          parts: [
+            {
+              type: "tool",
+              state: {
+                input: {
+                  path: path.join(root, "main.go"),
+                  content:
+                    'package main\nimport "github.com/stretchr/testify/require"\nfunc main() {}\n',
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+    assert.equal(noGhostDepsRule.inspect(context).decision, "block");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("manifest/no-ghost-deps supports Rust Cargo dependencies and local modules", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-rust-deps-"));
+  try {
+    fs.mkdirSync(path.join(root, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "Cargo.toml"),
+      '[package]\nname = "demo"\nversion = "0.1.0"\n[dependencies]\nserde = "1"\n'
+    );
+    fs.writeFileSync(path.join(root, "src", "local.rs"), "");
+
+    const context = {
+      sessionID: "rust-deps",
+      directory: root,
+      messages: [],
+      ruleConfig: {},
+      currentTurn: [
+        {
+          info: { id: "a-rust", role: "assistant" },
+          parts: [
+            {
+              type: "tool",
+              state: {
+                input: {
+                  path: path.join(root, "src", "main.rs"),
+                  content: "use serde::Serialize;\nuse local::Thing;\nuse anyhow::Result;\n",
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const result = noGhostDepsRule.inspect(context);
+    assert.equal(result.decision, "block");
+    assert.ok(result.findings.some((finding) => finding.pattern === "anyhow"));
+    assert.ok(!result.findings.some((finding) => finding.pattern === "local"));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runtime/circuit-breaker detects cosmetic command changes with the same root-cause", () => {
+  const commands = [
+    ["curl http://localhost:1234", "connect ECONNREFUSED 127.0.0.1:1234"],
+    ["curl -v http://localhost:1234", "connect ECONNREFUSED 127.0.0.1:1235"],
+    ["curl http://localhost:1234 2>&1", "connect ECONNREFUSED 127.0.0.1:1236"],
+  ];
+  const context = makeEvidenceContext(
+    commands.map(([command, error]) => ({
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "error",
+        input: { command },
+        error,
+      },
+    }))
+  );
+  assert.equal(circuitBreakerRule.inspect(context).decision, "block");
+});
+
+test("runtime/circuit-breaker resets semantic streak after successful progress", () => {
+  const parts = [
+    {
+      type: "tool",
+      tool: "bash",
+      state: { status: "error", input: { command: "curl /a" }, error: "connection refused 1001" },
+    },
+    {
+      type: "tool",
+      tool: "bash",
+      state: { status: "error", input: { command: "curl -v /a" }, error: "connection refused 1002" },
+    },
+    {
+      type: "tool",
+      tool: "bash",
+      state: { status: "completed", input: { command: "curl /health" }, metadata: { exit: 0 } },
+    },
+    {
+      type: "tool",
+      tool: "bash",
+      state: { status: "error", input: { command: "curl /a 2>&1" }, error: "connection refused 1003" },
+    },
+  ];
+  const context = makeEvidenceContext(parts);
+  assert.equal(circuitBreakerRule.inspect(context).decision, "pass");
+});
+
+test("GuardEngine remediation budget prevents repeated blocking within the same human turn and resets on a new turn", async () => {
+  const engine = new GuardEngine({
+    enabled: true,
+    remediationBudget: 1,
+    rules: {
+      "discipline/no-evasion": "error",
+      "discipline/no-apology": "off",
+      "quality/no-shortcuts": "off",
+      "integrity/no-stubs": "off",
+      "integrity/no-unverified-claims": "off",
+      "integrity/no-silent-failure": "off",
+      "safety/no-truncation": "off",
+      "safety/destructive-operations": "off",
+      "testing/no-cheat": "off",
+      "security/no-secrets": "off",
+      "manifest/no-ghost-deps": "off",
+      "runtime/circuit-breaker": "off",
+    },
+  });
+
+  const first = [
+    { info: { id: "budget-u1", role: "user" }, parts: [{ type: "text", text: "fix it" }] },
+    { info: { id: "budget-a1", role: "assistant" }, parts: [{ type: "text", text: "This is unrelated to this change." }] },
+  ];
+  assert.equal((await engine.inspect("budget", process.cwd(), first)).decision, "block");
+
+  const sameTurn = [
+    ...first,
+    { info: { id: "budget-a2", role: "assistant" }, parts: [{ type: "text", text: "It is outside the scope of this task." }] },
+  ];
+  assert.equal((await engine.inspect("budget", process.cwd(), sameTurn)).decision, "pass");
+
+  const newTurn = [
+    ...sameTurn,
+    { info: { id: "budget-u2", role: "user" }, parts: [{ type: "text", text: "check again" }] },
+    { info: { id: "budget-a3", role: "assistant" }, parts: [{ type: "text", text: "This is unrelated to this task." }] },
+  ];
+  assert.equal((await engine.inspect("budget", process.cwd(), newTurn)).decision, "block");
+});
+
+test("GuardEngine default destructive-operation severity is warn and does not block", async () => {
+  const engine = new GuardEngine({
+    enabled: true,
+    rules: {
+      "discipline/no-evasion": "off",
+      "discipline/no-apology": "off",
+      "quality/no-shortcuts": "off",
+      "integrity/no-stubs": "off",
+      "integrity/no-unverified-claims": "off",
+      "integrity/no-silent-failure": "off",
+      "safety/no-truncation": "off",
+      "testing/no-cheat": "off",
+      "security/no-secrets": "off",
+      "manifest/no-ghost-deps": "off",
+      "runtime/circuit-breaker": "off",
+    },
+  });
+
+  const messages = [
+    { info: { id: "warn-u", role: "user" }, parts: [{ type: "text", text: "inspect repo" }] },
+    {
+      info: { id: "warn-a", role: "assistant" },
+      parts: [
+        {
+          type: "tool",
+          state: {
+            status: "completed",
+            input: { command: "git reset --hard HEAD~1" },
+            metadata: { exit: 0 },
+          },
+        },
+      ],
+    },
+  ];
+  const result = await engine.inspect("warn-destructive", process.cwd(), messages);
+  assert.equal(result.decision, "pass");
+  const destructive = result.results.find((item) => item.ruleId === "safety/destructive-operations");
+  assert.equal(destructive.decision, "block");
+});
+
+
+test("integrity/no-unverified-claims treats verification before a later mutation as stale", () => {
+  const context = makeEvidenceContext(
+    [
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "npm test" },
+          metadata: { exit: 0 },
+        },
+      },
+      {
+        type: "tool",
+        tool: "write",
+        state: {
+          status: "completed",
+          input: { path: "src/index.ts", content: "export const changed = true;" },
+        },
+      },
+    ],
+    "All tests passed."
+  );
+  const result = noUnverifiedClaimsRule.inspect(context);
+  assert.equal(result.decision, "pass");
+  assert.equal(result.findings.length, 1);
+  assert.match(result.findings[0].description, /no matching verification/i);
+});
+
+test("integrity/no-unverified-claims checks git status content, not only exit code", () => {
+  const dirty = makeEvidenceContext(
+    [
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "git status --short --branch" },
+          output: "## main...origin/main\n M src/index.ts",
+          metadata: { exit: 0 },
+        },
+      },
+    ],
+    "The working tree is clean."
+  );
+  assert.equal(noUnverifiedClaimsRule.inspect(dirty).decision, "block");
+
+  const clean = makeEvidenceContext(
+    [
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "git status --short --branch" },
+          output: "## main...origin/main",
+          metadata: { exit: 0 },
+        },
+      },
+    ],
+    "The working tree is clean."
+  );
+  const result = noUnverifiedClaimsRule.inspect(clean);
+  assert.equal(result.decision, "pass");
+  assert.equal(result.findings.length, 0);
+});
+
+test("testing/no-cheat detects CI test-step removal without replacement", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      state: {
+        input: {
+          path: ".github/workflows/ci.yml",
+          patch: [
+            "--- a/.github/workflows/ci.yml",
+            "+++ b/.github/workflows/ci.yml",
+            "-      - run: npm test",
+            "+      - run: echo done",
+          ].join("\n"),
+        },
+      },
+    },
+  ]);
+  const result = noCheatRule.inspect({
+    ...context,
+    ruleConfig: { blockStructuralTestChanges: true },
+  });
+  assert.equal(result.decision, "block");
+  assert.ok(result.findings.some((finding) => finding.pattern === "CI test step removed"));
+});
+
+
+test("integrity/no-stubs detects placeholder constant returns only with explicit stub context", () => {
+  const blocked = {
+    sessionID: "stub-return",
+    directory: process.cwd(),
+    messages: [],
+    ruleConfig: {},
+    currentTurn: [
+      {
+        info: { id: "a-stub-return", role: "assistant" },
+        parts: [
+          {
+            type: "tool",
+            state: {
+              input: {
+                path: "src/feature.ts",
+                content: "export function ready() { return true; // placeholder }",
+              },
+            },
+          },
+        ],
+      },
+    ],
+  };
+  assert.equal(noStubsRule.inspect(blocked).decision, "block");
+
+  const legitimate = structuredClone(blocked);
+  legitimate.currentTurn[0].parts[0].state.input.content =
+    "export function ready() { return true; }";
+  assert.equal(noStubsRule.inspect(legitimate).decision, "pass");
+});
+
+test("manifest/no-ghost-deps does not flag Python standard-library imports", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-python-stdlib-"));
+  try {
+    fs.writeFileSync(
+      path.join(root, "pyproject.toml"),
+      '[project]\nname = "demo"\nversion = "0.1.0"\ndependencies = []\n'
+    );
+    clearDeclaredDepsCache();
+    const context = {
+      sessionID: "python-stdlib",
+      directory: root,
+      messages: [],
+      ruleConfig: {},
+      currentTurn: [
+        {
+          info: { id: "a-python-stdlib", role: "assistant" },
+          parts: [
+            {
+              type: "tool",
+              state: {
+                input: {
+                  path: path.join(root, "app.py"),
+                  content:
+                    "import email\nimport zoneinfo\nimport ipaddress\nimport graphlib\n",
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+    assert.equal(noGhostDepsRule.inspect(context).decision, "pass");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
+test("testing/no-cheat keeps structural test changes advisory without failed-test evidence", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      state: {
+        input: {
+          patch: [
+            "--- a/tests/value.test.ts",
+            "+++ b/tests/value.test.ts",
+            "-expect(result).toEqual({ ok: true, value: 42 });",
+            "+expect(result).toBeTruthy();",
+          ].join("\n"),
+        },
+      },
+    },
+  ]);
+
+  const result = noCheatRule.inspect(context);
+  assert.equal(result.decision, "pass");
+  assert.ok(result.findings.some((finding) => finding.pattern === "assertion weakened"));
+});
+
+test("testing/no-cheat blocks structural weakening when the same turn contains failed-test evidence", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "npm test" },
+        output: "1 failing",
+        metadata: { exit: 1 },
+      },
+    },
+    {
+      type: "tool",
+      state: {
+        input: {
+          patch: [
+            "--- a/tests/value.test.ts",
+            "+++ b/tests/value.test.ts",
+            "-expect(result).toEqual({ ok: true, value: 42 });",
+            "+expect(result).toBeTruthy();",
+          ].join("\n"),
+        },
+      },
+    },
+  ]);
+
+  assert.equal(noCheatRule.inspect(context).decision, "block");
+});
+
+
+test("integrity/no-silent-failure does not treat set +e alone as proof of masked failure", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: {
+          command: "set +e; npm test; code=$?; set -e; exit $code",
+        },
+        metadata: { exit: 0 },
+      },
+    },
+  ]);
+  assert.equal(noSilentFailureRule.inspect(context).decision, "pass");
+});
+
+test("safety/destructive-operations does not mistake a negative request for authorization", () => {
+  const currentTurn = [
+    {
+      info: { id: "u-no-delete", role: "user" },
+      parts: [{ type: "text", text: "Do not delete anything; only inspect the directory." }],
+    },
+    {
+      info: { id: "a-no-delete", role: "assistant" },
+      parts: [
+        {
+          type: "tool",
+          state: {
+            status: "completed",
+            input: { command: "sudo rm -rf ./cache" },
+            metadata: { exit: 0 },
+          },
+        },
+      ],
+    },
+  ];
+  const context = {
+    sessionID: "negative-destructive",
+    directory: process.cwd(),
+    messages: currentTurn,
+    currentTurn,
+    ruleConfig: {},
+    evidence: collectTurnEvidence(currentTurn),
+  };
+  assert.equal(destructiveOperationsRule.inspect(context).decision, "block");
+});
+
+test("runtime/circuit-breaker resets exact failure streak after successful progress", () => {
+  const fail = {
+    type: "tool",
+    tool: "bash",
+    state: {
+      status: "error",
+      input: { command: "curl http://localhost:1234" },
+      error: "connection refused 1234",
+    },
+  };
+  const context = makeEvidenceContext([
+    structuredClone(fail),
+    structuredClone(fail),
+    {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "curl http://localhost:9999" },
+        output: "ok",
+        metadata: { exit: 0 },
+      },
+    },
+    structuredClone(fail),
+  ]);
+  assert.equal(circuitBreakerRule.inspect(context).decision, "pass");
+});
+
+test("GuardEngine remediationBudget zero disables remediation without disabling findings", async () => {
+  const engine = new GuardEngine({
+    enabled: true,
+    remediationBudget: 0,
+    rules: {
+      "discipline/no-evasion": "error",
+      "discipline/no-apology": "off",
+      "quality/no-shortcuts": "off",
+      "integrity/no-stubs": "off",
+      "integrity/no-unverified-claims": "off",
+      "integrity/no-silent-failure": "off",
+      "safety/no-truncation": "off",
+      "safety/destructive-operations": "off",
+      "testing/no-cheat": "off",
+      "security/no-secrets": "off",
+      "manifest/no-ghost-deps": "off",
+      "runtime/circuit-breaker": "off",
+    },
+  });
+
+  const messages = [
+    { info: { id: "budget0-u", role: "user" }, parts: [{ type: "text", text: "check it" }] },
+    { info: { id: "budget0-a", role: "assistant" }, parts: [{ type: "text", text: "This is unrelated to this change." }] },
+  ];
+
+  const result = await engine.inspect("budget-zero", process.cwd(), messages);
+  assert.equal(result.decision, "pass");
+  assert.equal(
+    result.results.find((item) => item.ruleId === "discipline/no-evasion")?.decision,
+    "block"
+  );
+});
+
+test("manifest/no-ghost-deps recognizes common Python import/distribution aliases", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-python-aliases-"));
+  try {
+    fs.writeFileSync(
+      path.join(root, "pyproject.toml"),
+      [
+        "[project]",
+        'name = "demo"',
+        'version = "0.1.0"',
+        'dependencies = ["python-dateutil", "python-dotenv", "PyJWT", "google-cloud-storage"]',
+        "",
+      ].join("\n")
+    );
+    clearDeclaredDepsCache();
+
+    const context = {
+      sessionID: "python-aliases",
+      directory: root,
+      messages: [],
+      ruleConfig: {},
+      currentTurn: [
+        {
+          info: { id: "a-python-aliases", role: "assistant" },
+          parts: [
+            {
+              type: "tool",
+              state: {
+                input: {
+                  path: path.join(root, "app.py"),
+                  content:
+                    "import dateutil\nimport dotenv\nimport jwt\nfrom google.cloud import storage\n",
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    assert.equal(noGhostDepsRule.inspect(context).decision, "pass");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
+test("evidence collector never treats masked verification as successful proof", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "npm test || true" },
+        output: "1 failing",
+        metadata: { exit: 0 },
+      },
+    },
+  ]);
+
+  const record = context.evidence.records.find((item) => item.kind === "test");
+  assert.equal(record.status, "unknown");
+  assert.match(record.error, /masked/i);
+});
+
+test("integrity/no-unverified-claims treats git status from before a later mutation as stale", () => {
+  const context = makeEvidenceContext(
+    [
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "git status --short --branch" },
+          output: "## main...origin/main",
+          metadata: { exit: 0 },
+        },
+      },
+      {
+        type: "tool",
+        tool: "write",
+        state: {
+          status: "completed",
+          input: { path: "src/changed.ts", content: "export const changed = true;" },
+        },
+      },
+    ],
+    "The working tree is clean."
+  );
+
+  const result = noUnverifiedClaimsRule.inspect(context);
+  assert.equal(result.decision, "pass");
+  assert.equal(result.findings.length, 1);
+});
+
+
+test("evidence collector records every verification kind in a compound command", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "npm run build && npm test && npm audit" },
+        metadata: { exit: 0 },
+      },
+    },
+  ]);
+
+  const kinds = new Set(context.evidence.records.map((record) => record.kind));
+  assert.ok(kinds.has("build"));
+  assert.ok(kinds.has("test"));
+  assert.ok(kinds.has("audit"));
+});
+
+test("evidence collector does not infer shell success without an explicit exit code", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "npm test" },
+        output: "looks complete",
+      },
+    },
+  ]);
+
+  const record = context.evidence.records.find((item) => item.kind === "test");
+  assert.equal(record.status, "unknown");
+  assert.match(record.error, /without an explicit exit code/i);
+});
+
+test("circuit-breaker fingerprint keeps semantic HTTP and exit codes distinct", () => {
+  assert.notEqual(
+    normalizeErrorFingerprint("HTTP status 404"),
+    normalizeErrorFingerprint("HTTP status 500")
+  );
+  assert.notEqual(
+    normalizeErrorFingerprint("exit code 1"),
+    normalizeErrorFingerprint("exit code 2")
+  );
+  assert.equal(
+    normalizeErrorFingerprint("connect ECONNREFUSED 127.0.0.1:1234"),
+    normalizeErrorFingerprint("connect ECONNREFUSED 127.0.0.1:5678")
+  );
+});
+
+test("runtime/circuit-breaker counts a compound tool invocation only once", () => {
+  const parts = [1, 2].map(() => ({
+    type: "tool",
+    tool: "bash",
+    state: {
+      status: "error",
+      input: { command: "npm run build && npm test" },
+      error: "shared failure 12345",
+    },
+  }));
+
+  const context = makeEvidenceContext(parts);
+  assert.equal(circuitBreakerRule.inspect(context).decision, "pass");
+});
+
+test("manifest/no-ghost-deps uses real Node builtin semantics for test/sqlite", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-node-builtins-"));
+  try {
+    fs.writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ name: "demo", dependencies: {} })
+    );
+    clearDeclaredDepsCache();
+
+    const bare = {
+      sessionID: "node-bare",
+      directory: root,
+      messages: [],
+      ruleConfig: {},
+      currentTurn: [
+        {
+          info: { id: "a-node-bare", role: "assistant" },
+          parts: [
+            {
+              type: "tool",
+              state: {
+                input: {
+                  path: path.join(root, "src.js"),
+                  content: 'import x from "test";\nimport y from "sqlite";\n',
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+    assert.equal(noGhostDepsRule.inspect(bare).decision, "block");
+
+    const prefixed = structuredClone(bare);
+    prefixed.currentTurn[0].parts[0].state.input.content =
+      'import test from "node:test";\nimport sqlite from "node:sqlite";\n';
+    assert.equal(noGhostDepsRule.inspect(prefixed).decision, "pass");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("manifest/no-ghost-deps ignores Python imports inside comments and strings", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-python-mask-"));
+  try {
+    fs.writeFileSync(
+      path.join(root, "pyproject.toml"),
+      '[project]\nname = "demo"\nversion = "0.1.0"\ndependencies = []\n'
+    );
+    clearDeclaredDepsCache();
+
+    const context = {
+      sessionID: "python-mask",
+      directory: root,
+      messages: [],
+      ruleConfig: {},
+      currentTurn: [
+        {
+          info: { id: "a-python-mask", role: "assistant" },
+          parts: [
+            {
+              type: "tool",
+              state: {
+                input: {
+                  path: path.join(root, "app.py"),
+                  content: [
+                    '# import httpx',
+                    'example = "import requests"',
+                    '"""',
+                    'from pandas import DataFrame',
+                    '"""',
+                    'import json  # import httpx',
+                  ].join("\n"),
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    assert.equal(noGhostDepsRule.inspect(context).decision, "pass");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("manifest/no-ghost-deps follows requirements -r includes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-requirements-include-"));
+  try {
+    fs.writeFileSync(path.join(root, "requirements.txt"), "-r requirements-base.txt\n");
+    fs.writeFileSync(path.join(root, "requirements-base.txt"), "requests>=2\n");
+    clearDeclaredDepsCache();
+
+    const context = {
+      sessionID: "python-requirements-include",
+      directory: root,
+      messages: [],
+      ruleConfig: {},
+      currentTurn: [
+        {
+          info: { id: "a-python-requirements-include", role: "assistant" },
+          parts: [
+            {
+              type: "tool",
+              state: {
+                input: {
+                  path: path.join(root, "app.py"),
+                  content: "import requests\n",
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+    assert.equal(noGhostDepsRule.inspect(context).decision, "pass");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("testing/no-cheat coverage check ignores unrelated numeric config changes", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      state: {
+        input: {
+          path: "vitest.config.ts",
+          patch: [
+            "--- a/vitest.config.ts",
+            "+++ b/vitest.config.ts",
+            "-coverage: { lines: 90 }, timeout: 5000",
+            "+coverage: { lines: 95 }, timeout: 4000",
+          ].join("\n"),
+        },
+      },
+    },
+  ]);
+
+  const result = noCheatRule.inspect({
+    ...context,
+    ruleConfig: { blockStructuralTestChanges: true },
+  });
+  assert.equal(result.decision, "pass");
+  assert.ok(
+    !result.findings.some((finding) => finding.pattern === "coverage threshold reduced")
+  );
+});
+
+test("testing/no-cheat only pairs assertion weakening within the same diff hunk", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      state: {
+        input: {
+          path: "tests/value.test.ts",
+          patch: [
+            "--- a/tests/value.test.ts",
+            "+++ b/tests/value.test.ts",
+            "@@ -1,1 +1,1 @@",
+            "-expect(a).toEqual({ ok: true });",
+            "+expect(a).toEqual({ ok: true, value: 1 });",
+            "@@ -20,0 +21,1 @@",
+            "+expect(b).toBeTruthy();",
+          ].join("\n"),
+        },
+      },
+    },
+  ]);
+
+  const result = noCheatRule.inspect({
+    ...context,
+    ruleConfig: { blockStructuralTestChanges: true },
+  });
+  assert.equal(result.decision, "pass");
+  assert.ok(
+    !result.findings.some((finding) => finding.pattern === "assertion weakened")
+  );
+});
+
+test("safety/destructive-operations does not broaden narrow delete authorization to rm -rf dot", () => {
+  const currentTurn = [
+    {
+      info: { id: "u-narrow-delete", role: "user" },
+      parts: [{ type: "text", text: "Delete the old cache file only." }],
+    },
+    {
+      info: { id: "a-narrow-delete", role: "assistant" },
+      parts: [
+        {
+          type: "tool",
+          state: {
+            status: "completed",
+            input: { command: "rm -rf ." },
+            metadata: { exit: 0 },
+          },
+        },
+      ],
+    },
+  ];
+  const context = {
+    sessionID: "narrow-delete",
+    directory: process.cwd(),
+    messages: currentTurn,
+    currentTurn,
+    ruleConfig: {},
+    evidence: collectTurnEvidence(currentTurn),
+  };
+  assert.equal(destructiveOperationsRule.inspect(context).decision, "block");
+});
+
+test("safety/destructive-operations recognizes long-form destructive flags", () => {
+  for (const command of [
+    "git clean --force -d",
+    "docker system prune --all --force",
+    "rm --recursive --force ./cache",
+  ]) {
+    const context = makeEvidenceContext([
+      {
+        type: "tool",
+        state: {
+          status: "completed",
+          input: { command },
+          metadata: { exit: 0 },
+        },
+      },
+    ]);
+    assert.equal(destructiveOperationsRule.inspect(context).decision, "block", command);
+  }
+});
+
+test("integrity/no-unverified-claims recognizes tests are passing phrasing", () => {
+  const result = noUnverifiedClaimsRule.inspect(
+    makeEvidenceContext([], "The tests are passing.")
+  );
+  assert.equal(result.decision, "pass");
+  assert.equal(result.findings.length, 1);
+});
+
+test("integrity/no-unverified-claims does not let failed git status become clean evidence", () => {
+  const context = makeEvidenceContext(
+    [
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "git status --short --branch" },
+          output: "## main...origin/main",
+          metadata: { exit: 1 },
+        },
+      },
+    ],
+    "The working tree is clean."
+  );
+
+  assert.equal(noUnverifiedClaimsRule.inspect(context).decision, "block");
+});
+
+test("failed file mutation does not invalidate earlier successful verification", () => {
+  const context = makeEvidenceContext(
+    [
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "npm test" },
+          metadata: { exit: 0 },
+        },
+      },
+      {
+        type: "tool",
+        tool: "write",
+        state: {
+          status: "error",
+          input: { path: "src/index.ts", content: "broken write" },
+          error: "permission denied",
+        },
+      },
+    ],
+    "All tests passed."
+  );
+
+  const result = noUnverifiedClaimsRule.inspect(context);
+  assert.equal(result.decision, "pass");
+  assert.equal(result.findings.length, 0);
+});
+
+
+test("GuardEngine does not treat foreign synthetic prompts as Guardian remediation", async () => {
+  const engine = new GuardEngine({
+    enabled: true,
+    rules: {
+      "discipline/no-evasion": "error",
+      "discipline/no-apology": "off",
+      "quality/no-shortcuts": "off",
+      "integrity/no-stubs": "off",
+      "integrity/no-unverified-claims": "off",
+      "integrity/no-silent-failure": "off",
+      "safety/no-truncation": "off",
+      "safety/destructive-operations": "off",
+      "testing/no-cheat": "off",
+      "security/no-secrets": "off",
+      "manifest/no-ghost-deps": "off",
+      "runtime/circuit-breaker": "off",
+    },
+  });
+
+  const messages = [
+    { info: { id: "foreign-u1", role: "user" }, parts: [{ type: "text", text: "check it" }] },
+    {
+      info: { id: "foreign-synth", role: "user" },
+      parts: [{ type: "text", text: "[other-plugin] continue", synthetic: true }],
+    },
+    {
+      info: { id: "foreign-a1", role: "assistant" },
+      parts: [{ type: "text", text: "This is unrelated to this change." }],
+    },
+  ];
+
+  const result = await engine.inspect("foreign-synthetic", process.cwd(), messages);
+  assert.equal(result.decision, "block");
+});
+
+test("Guardian remediation marker remains the loop-guard authority", async () => {
+  const engine = new GuardEngine({ enabled: true });
+  const messages = [
+    { info: { id: "marker-u1", role: "user" }, parts: [{ type: "text", text: "check it" }] },
+    {
+      info: { id: "marker-remediation", role: "user" },
+      parts: [{ type: "text", text: REMEDIATION_MARKER + "\nFix the finding.", synthetic: false }],
+    },
+    {
+      info: { id: "marker-a1", role: "assistant" },
+      parts: [{ type: "text", text: "This is unrelated to this change." }],
+    },
+  ];
+  const result = await engine.inspect("marker-remediation", process.cwd(), messages);
+  assert.equal(result.decision, "pass");
+});
+
+
+test("quality/no-shortcuts does not flag shortcut words inside identifiers or string literals", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      state: {
+        input: {
+          path: "src/names.ts",
+          content: [
+            "const temporaryValue = 1;",
+            "const isHardcodedSecret = false;",
+            'const label = "temporary fix";',
+            'const marker = "TODO";',
+          ].join("\n"),
+        },
+      },
+    },
+  ]);
+
+  assert.equal(noShortcutsRule.inspect(context).decision, "pass");
+});
+
+test("quality/no-shortcuts still blocks actual shortcut comments", () => {
+  for (const content of [
+    "const x = 1; // TODO: replace this",
+    "# FIXME: temporary fix\nx = 1",
+    "/* HACK: workaround */\nconst x = 1;",
+  ]) {
+    const context = makeEvidenceContext([
+      {
+        type: "tool",
+        state: { input: { path: "src/file.ts", content } },
+      },
+    ]);
+    assert.equal(noShortcutsRule.inspect(context).decision, "block", content);
+  }
+});
+
+test("GuardEngine invalid explicit severity fails open to warn", async () => {
+  const engine = new GuardEngine({
+    enabled: true,
+    rules: {
+      "discipline/no-evasion": "definitely-not-a-severity",
+      "discipline/no-apology": "off",
+      "quality/no-shortcuts": "off",
+      "integrity/no-stubs": "off",
+      "integrity/no-unverified-claims": "off",
+      "integrity/no-silent-failure": "off",
+      "safety/no-truncation": "off",
+      "safety/destructive-operations": "off",
+      "testing/no-cheat": "off",
+      "security/no-secrets": "off",
+      "manifest/no-ghost-deps": "off",
+      "runtime/circuit-breaker": "off",
+    },
+  });
+
+  const messages = [
+    { info: { id: "bad-severity-u", role: "user" }, parts: [{ type: "text", text: "check" }] },
+    { info: { id: "bad-severity-a", role: "assistant" }, parts: [{ type: "text", text: "This is unrelated to this change." }] },
+  ];
+
+  const result = await engine.inspect("bad-severity", process.cwd(), messages);
+  assert.equal(result.decision, "pass");
+  assert.equal(
+    result.results.find((item) => item.ruleId === "discipline/no-evasion")?.decision,
+    "block"
+  );
+});
+
+test("testing/no-cheat treats pre-existing skip in whole-file write as advisory by default", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      state: {
+        input: {
+          path: "tests/legacy.test.ts",
+          content: [
+            'test.skip("legacy unsupported platform", () => {});',
+            'test("new behavior", () => expect(1).toBe(1));',
+          ].join("\n"),
+        },
+      },
+    },
+  ]);
+
+  const result = noCheatRule.inspect(context);
+  assert.equal(result.decision, "pass");
+  assert.ok(result.findings.some((finding) => finding.pattern.includes("test.skip")));
+});
+
+test("testing/no-cheat still blocks targeted addition of test.skip", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      state: {
+        input: {
+          path: "tests/new.test.ts",
+          new_string: 'test.skip("newly disabled", () => {});',
+        },
+      },
+    },
+  ]);
+
+  assert.equal(noCheatRule.inspect(context).decision, "block");
+});
+
+test("safety/destructive-operations treats rm -rf ./ as broad deletion", () => {
+  const currentTurn = [
+    {
+      info: { id: "u-rm-dot-slash", role: "user" },
+      parts: [{ type: "text", text: "Delete the old cache file only." }],
+    },
+    {
+      info: { id: "a-rm-dot-slash", role: "assistant" },
+      parts: [
+        {
+          type: "tool",
+          state: {
+            status: "completed",
+            input: { command: "rm -rf ./" },
+            metadata: { exit: 0 },
+          },
+        },
+      ],
+    },
+  ];
+  const context = {
+    sessionID: "rm-dot-slash",
+    directory: process.cwd(),
+    messages: currentTurn,
+    currentTurn,
+    ruleConfig: {},
+    evidence: collectTurnEvidence(currentTurn),
+  };
+
+  assert.equal(destructiveOperationsRule.inspect(context).decision, "block");
+});
+
+
+test("foreign synthetic prompts do not reset the human-turn remediation budget", async () => {
+  const engine = new GuardEngine({
+    enabled: true,
+    remediationBudget: 1,
+    rules: {
+      "discipline/no-evasion": "error",
+      "discipline/no-apology": "off",
+      "quality/no-shortcuts": "off",
+      "integrity/no-stubs": "off",
+      "integrity/no-unverified-claims": "off",
+      "integrity/no-silent-failure": "off",
+      "safety/no-truncation": "off",
+      "safety/destructive-operations": "off",
+      "testing/no-cheat": "off",
+      "security/no-secrets": "off",
+      "manifest/no-ghost-deps": "off",
+      "runtime/circuit-breaker": "off",
+    },
+  });
+
+  const first = [
+    { info: { id: "synthetic-budget-u", role: "user" }, parts: [{ type: "text", text: "check" }] },
+    { info: { id: "synthetic-budget-a1", role: "assistant" }, parts: [{ type: "text", text: "This is unrelated to this change." }] },
+  ];
+  assert.equal(
+    (await engine.inspect("synthetic-budget", process.cwd(), first)).decision,
+    "block"
+  );
+
+  const second = [
+    ...first,
+    {
+      info: { id: "other-plugin-synthetic", role: "user" },
+      parts: [{ type: "text", text: "[other-plugin] continue", synthetic: true }],
+    },
+    {
+      info: { id: "synthetic-budget-a2", role: "assistant" },
+      parts: [{ type: "text", text: "This is outside the scope of this task." }],
+    },
+  ];
+  assert.equal(
+    (await engine.inspect("synthetic-budget", process.cwd(), second)).decision,
+    "pass"
+  );
+});
+
+test("destructive authorization survives foreign synthetic prompts in the same human turn", () => {
+  const currentTurn = [
+    {
+      info: { id: "human-reset", role: "user" },
+      parts: [{ type: "text", text: "Bu branch'i hard reset ile sıfırla." }],
+    },
+    {
+      info: { id: "foreign-reset-synthetic", role: "user" },
+      parts: [{ type: "text", text: "[other-plugin] metadata", synthetic: true }],
+    },
+    {
+      info: { id: "assistant-reset", role: "assistant" },
+      parts: [
+        {
+          type: "tool",
+          state: {
+            status: "completed",
+            input: { command: "git reset --hard origin/main" },
+            metadata: { exit: 0 },
+          },
+        },
+      ],
+    },
+  ];
+
+  const context = {
+    sessionID: "foreign-synthetic-reset",
+    directory: process.cwd(),
+    messages: currentTurn,
+    currentTurn,
+    ruleConfig: {},
+    evidence: collectTurnEvidence(currentTurn),
+  };
+  assert.equal(destructiveOperationsRule.inspect(context).decision, "pass");
+});
+
+test("quality/no-shortcuts detects markers inside multiline comments", () => {
+  const context = makeEvidenceContext([
+    {
+      type: "tool",
+      state: {
+        input: {
+          path: "src/file.ts",
+          content: "/*\n * TODO: finish migration\n */\nexport const x = 1;",
+        },
+      },
+    },
+  ]);
+
+  assert.equal(noShortcutsRule.inspect(context).decision, "block");
+});
+
+test("GuardEngine invalid object severity also fails open to warn", async () => {
+  const engine = new GuardEngine({
+    enabled: true,
+    rules: {
+      "discipline/no-evasion": { severity: "broken-value" },
+      "discipline/no-apology": "off",
+      "quality/no-shortcuts": "off",
+      "integrity/no-stubs": "off",
+      "integrity/no-unverified-claims": "off",
+      "integrity/no-silent-failure": "off",
+      "safety/no-truncation": "off",
+      "safety/destructive-operations": "off",
+      "testing/no-cheat": "off",
+      "security/no-secrets": "off",
+      "manifest/no-ghost-deps": "off",
+      "runtime/circuit-breaker": "off",
+    },
+  });
+
+  const result = await engine.inspect("bad-object-severity", process.cwd(), [
+    { info: { id: "bad-object-u", role: "user" }, parts: [{ type: "text", text: "check" }] },
+    { info: { id: "bad-object-a", role: "assistant" }, parts: [{ type: "text", text: "This is unrelated to this change." }] },
+  ]);
+
+  assert.equal(result.decision, "pass");
+  assert.equal(
+    result.results.find((item) => item.ruleId === "discipline/no-evasion")?.decision,
+    "block"
+  );
+});
+
+
+test("quality/no-shortcuts keeps ambiguous descriptive wording advisory", () => {
+  for (const text of [
+    "The current implementation uses a workaround documented by the upstream project.",
+    "The placeholder is removed during compilation.",
+    "This value is hardcoded by the protocol specification.",
+    "The first version of the file format used a different header.",
+    "This approach is not ideal for low-memory devices.",
+  ]) {
+    const result = noShortcutsRule.inspect(makeEvidenceContext([], text));
+    assert.equal(result.decision, "pass", text);
+    assert.ok(result.findings.length >= 1, text);
+    assert.ok(result.findings.every((finding) => finding.confidence === "medium"), text);
+  }
+});
+
+test("quality/no-shortcuts custom phrases remain blocking even when normally advisory", () => {
+  const context = makeEvidenceContext([], "This uses a workaround.");
+  const result = noShortcutsRule.inspect({
+    ...context,
+    ruleConfig: { customPhrases: ["workaround"] },
+  });
+  assert.equal(result.decision, "block");
+});
+
+test("integrity/no-silent-failure does not block exploratory test discovery commands", () => {
+  for (const command of [
+    "pytest --collect-only || true",
+    "jest --listTests || true",
+    "vitest --help || true",
+  ]) {
+    const result = noSilentFailureRule.inspect(
+      makeEvidenceContext([
+        {
+          type: "tool",
+          tool: "bash",
+          state: {
+            status: "completed",
+            input: { command },
+            metadata: { exit: 0 },
+          },
+        },
+      ])
+    );
+    assert.equal(result.decision, "pass", command);
+    assert.equal(result.findings.length, 0, command);
+  }
+});
+
+
+test("integrity/no-unverified-claims keeps failed compound verification outcomes advisory", () => {
+  const context = makeEvidenceContext(
+    [
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "npm run build && npm test" },
+          output: "build failed before tests ran",
+          metadata: { exit: 1 },
+        },
+      },
+    ],
+    "All tests passed."
+  );
+
+  const testRecord = context.evidence.records.find((record) => record.kind === "test");
+  assert.equal(testRecord.status, "failure");
+  assert.equal(testRecord.ambiguousOutcome, true);
+
+  const result = noUnverifiedClaimsRule.inspect(context);
+  assert.equal(result.decision, "pass");
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].confidence, "medium");
+});
+
+test("integrity/no-unverified-claims does not treat unrelated verification failure as contradiction to generic bug-fixed claim", () => {
+  const context = makeEvidenceContext(
+    [
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "npm run lint" },
+          output: "unrelated formatting failure",
+          metadata: { exit: 1 },
+        },
+      },
+    ],
+    "The bug is fixed."
+  );
+
+  const result = noUnverifiedClaimsRule.inspect(context);
+  assert.equal(result.decision, "pass");
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].confidence, "medium");
+});
+
+
+test("discipline/no-evasion does not block negated unrelated phrasing", () => {
+  const result = noEvasionRule.inspect(
+    makeEvidenceContext([], "This is not unrelated to the change; it is directly caused by it.")
+  );
+  assert.equal(result.decision, "pass");
+  assert.equal(result.findings.length, 0);
+});
+
+test("discipline/no-apology does not block factual reporting of sorry token", () => {
+  for (const text of [
+    "The upstream server returned sorry as its payload.",
+    "The response contains sorry after rate limiting.",
+    "The output text is sorry.",
+  ]) {
+    const result = noApologyRule.inspect(makeEvidenceContext([], text));
+    assert.equal(result.decision, "pass", text);
+    assert.equal(result.findings.length, 0, text);
+  }
+
+  assert.equal(
+    noApologyRule.inspect(makeEvidenceContext([], "Sorry, I made a mistake.")).decision,
+    "block"
+  );
+});
+
+
+test("integrity/no-unverified-claims catches dirty long-form git status", () => {
+  for (const output of [
+    "On branch main\nChanges not staged for commit:\n  modified:   src/index.ts",
+    "On branch main\nUntracked files:\n  notes.txt",
+    "On branch main\nChanges to be committed:\n  new file:   src/test.ts",
+  ]) {
+    const context = makeEvidenceContext(
+      [{
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "git status" },
+          output,
+          metadata: { exit: 0 },
+        },
+      }],
+      "The working tree is clean."
+    );
+    const result = noUnverifiedClaimsRule.inspect(context);
+    assert.equal(result.decision, "block", output);
+    assert.equal(result.findings[0].confidence, "high");
+  }
+});
+
+test("safety/destructive-operations handles split recursive force flags and git clean -fd", () => {
+  for (const command of [
+    "rm -r -f ./cache",
+    "rm --recursive --force ./cache",
+    "rm -rf ./cache",
+    "git clean -fd",
+    "git clean -df",
+    "git clean --force -d",
+  ]) {
+    const context = makeEvidenceContext([{
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command },
+        metadata: { exit: 0 },
+      },
+    }]);
+    assert.equal(destructiveOperationsRule.inspect(context).decision, "block", command);
+  }
+});
+
+test("safety/destructive-operations does not broaden project-cache deletion into project deletion", () => {
+  const currentTurn = [
+    {
+      info: { id: "scope-user", role: "user" },
+      parts: [{ type: "text", text: "Delete the project cache only." }],
+    },
+    {
+      info: { id: "scope-agent", role: "assistant" },
+      parts: [{
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "rm -rf ." },
+          metadata: { exit: 0 },
+        },
+      }],
+    },
+  ];
+  const context = {
+    sessionID: "scope-delete",
+    directory: process.cwd(),
+    messages: currentTurn,
+    currentTurn,
+    ruleConfig: {},
+    evidence: collectTurnEvidence(currentTurn),
+  };
+  assert.equal(destructiveOperationsRule.inspect(context).decision, "block");
+  currentTurn[0].parts[0].text = "Delete the entire project.";
+  assert.equal(destructiveOperationsRule.inspect(context).decision, "pass");
+});
+
+
+test("evidence collector does not treat piped or semicolon-chained verification as proof", () => {
+  for (const command of [
+    "npm test | tee test.log",
+    "npm test; npm audit",
+    "npm test || npm audit",
+  ]) {
+    const context = makeEvidenceContext([{
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command },
+        metadata: { exit: 0 },
+      },
+    }]);
+    const verification = context.evidence.records.filter(
+      (record) => ["test", "build", "typecheck", "lint", "audit"].includes(record.kind)
+    );
+    assert.ok(verification.length, command);
+    assert.ok(verification.every((record) => record.status === "unknown"), command);
+  }
+});
+
+test("evidence collector accepts explicitly pipefail-protected and && chained commands", () => {
+  for (const command of [
+    "set -o pipefail; npm test | tee test.log",
+    "npm run build && npm test && npm audit",
+  ]) {
+    const context = makeEvidenceContext([{
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command },
+        metadata: { exit: 0 },
+      },
+    }]);
+    const verification = context.evidence.records.filter(
+      (record) => ["test", "build", "typecheck", "lint", "audit"].includes(record.kind)
+    );
+    assert.ok(verification.length, command);
+    assert.ok(verification.every((record) => record.status === "success"), command);
+  }
+});
+
+test("integrity/no-unverified-claims requires a successful git status exit for empty short output", () => {
+  const context = makeEvidenceContext(
+    [{
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "git status --short" },
+        output: "",
+      },
+    }],
+    "The working tree is clean."
+  );
+
+  const result = noUnverifiedClaimsRule.inspect(context);
+  assert.equal(result.decision, "pass");
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].confidence, "medium");
+});
+
+
+test("discipline/no-apology continues past a reported token to detect a real apology", () => {
+  const result = noApologyRule.inspect(
+    makeEvidenceContext(
+      [],
+      "The server returned sorry as payload. Sorry, I made a mistake."
+    )
+  );
+  assert.equal(result.decision, "block");
+  assert.ok(result.findings.some((finding) => finding.pattern === "English"));
+});
+
+test("discipline/no-evasion continues past negated wording to detect a later dismissal", () => {
+  const result = noEvasionRule.inspect(
+    makeEvidenceContext(
+      [],
+      "This is not unrelated to this change. The failing test is unrelated to this change."
+    )
+  );
+  assert.equal(result.decision, "block");
+  assert.ok(
+    result.findings.some((finding) => finding.pattern === "unrelated to this change")
+  );
 });

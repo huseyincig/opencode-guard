@@ -12,6 +12,11 @@ export * from "./rules/no-secrets.js";
 export * from "./rules/no-ghost-deps.js";
 export * from "./rules/circuit-breaker.js";
 export * from "./rules/no-apology.js";
+export * from "./rules/no-unverified-claims.js";
+export * from "./rules/no-silent-failure.js";
+export * from "./rules/destructive-operations.js";
+export * from "./evidence.js";
+export * from "./state.js";
 export * from "./prose.js";
 /**
  * Converts OpenCode v2 session.context() records into the stable internal

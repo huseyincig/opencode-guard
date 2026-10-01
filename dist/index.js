@@ -10,6 +10,11 @@ export * from "./rules/no-secrets.js";
 export * from "./rules/no-ghost-deps.js";
 export * from "./rules/circuit-breaker.js";
 export * from "./rules/no-apology.js";
+export * from "./rules/no-unverified-claims.js";
+export * from "./rules/no-silent-failure.js";
+export * from "./rules/destructive-operations.js";
+export * from "./evidence.js";
+export * from "./state.js";
 export * from "./prose.js";
 function stringifyV2ToolContent(content) {
     if (!Array.isArray(content))
@@ -54,6 +59,8 @@ function normalizeV2AssistantPart(part) {
         metadata: state.metadata && typeof state.metadata === "object"
             ? state.metadata
             : undefined,
+        exitCode: state.exitCode,
+        raw: state.raw,
     };
     const output = typeof state.output === "string"
         ? state.output

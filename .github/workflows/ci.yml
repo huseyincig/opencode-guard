@@ -23,6 +23,9 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: node sandbox/smoke-test.mjs
+      - run: node sandbox/comprehensive-test.mjs
+      - run: npm audit
       - run: npm pack --dry-run
 
   release:

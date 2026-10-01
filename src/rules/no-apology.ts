@@ -60,6 +60,18 @@ export const MULTILINGUAL_APOLOGY_PATTERNS: ApologyPattern[] = [
   },
 ];
 
+function isReportedApologyToken(text: string, matchIndex: number): boolean {
+  const prefix = text.slice(Math.max(0, matchIndex - 100), matchIndex);
+  return (
+    /\b(?:return(?:ed|s)?|report(?:ed|s)?|contain(?:ed|s)?|emit(?:ted|s)?|print(?:ed|s)?|say|says|said)\s+(?:the\s+(?:word|text)\s+)?$/i.test(
+      prefix
+    ) ||
+    /\b(?:payload|response|message|error|output|text|string|token|word)\b[^.!?]{0,30}\b(?:is|was|equals?|contains?|included?)\s*$/i.test(
+      prefix
+    )
+  );
+}
+
 function extractSnippet(text: string, matchIndex: number, matchLen: number): string {
   const maxPerSide = 80;
   const start = Math.max(0, matchIndex - maxPerSide);
@@ -101,8 +113,21 @@ export const noApologyRule: GuardRule = {
         for (const pattern of activePatterns) {
           if (seenPatterns.has(pattern.name)) continue;
 
-          const match = pattern.regex.exec(cleanText);
-          if (match) {
+          const regex = new RegExp(
+            pattern.regex.source,
+            pattern.regex.flags.includes("g")
+              ? pattern.regex.flags
+              : `${pattern.regex.flags}g`
+          );
+          let match: RegExpExecArray | null;
+          while ((match = regex.exec(cleanText)) !== null) {
+            if (
+              /^sorry\b/i.test(match[0].trim()) &&
+              isReportedApologyToken(cleanText, match.index)
+            ) {
+              continue;
+            }
+
             seenPatterns.add(pattern.name);
             const snippet = extractSnippet(cleanText, match.index, match[0].length);
             findings.push({
@@ -111,6 +136,7 @@ export const noApologyRule: GuardRule = {
               messageSnippet: snippet,
               description: `Apology/sycophancy language detected (${pattern.name}): "${match[0]}" → "${snippet}"`,
             });
+            break;
           }
         }
       }

@@ -1,0 +1,324 @@
+import { extractLikelyShellMutation } from "./tool-input.js";
+function stringify(value) {
+    if (typeof value === "string")
+        return value;
+    if (value === undefined || value === null)
+        return "";
+    if (typeof value === "object") {
+        try {
+            return JSON.stringify(value);
+        }
+        catch {
+            return String(value);
+        }
+    }
+    return String(value);
+}
+function stableStringify(value) {
+    const seen = new WeakSet();
+    const normalize = (input) => {
+        if (input === null || typeof input !== "object")
+            return input;
+        if (seen.has(input))
+            return "[Circular]";
+        seen.add(input);
+        if (Array.isArray(input))
+            return input.map(normalize);
+        return Object.fromEntries(Object.entries(input)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([key, entry]) => [key, normalize(entry)]));
+    };
+    try {
+        return JSON.stringify(normalize(value));
+    }
+    catch {
+        return String(value);
+    }
+}
+function commandFromPart(part) {
+    const input = part.state?.input;
+    if (!input)
+        return "";
+    for (const key of ["command", "cmd", "script"]) {
+        const value = input[key];
+        if (typeof value === "string" && value.trim())
+            return value.trim();
+    }
+    return "";
+}
+function toolNameFromPart(part) {
+    if (typeof part.tool === "string")
+        return part.tool;
+    if (typeof part.name === "string")
+        return part.name;
+    return "tool";
+}
+function parseExitCode(part, outputText) {
+    const metadata = part.state?.metadata;
+    const direct = metadata?.exit ??
+        metadata?.exitCode ??
+        metadata?.code ??
+        part.state?.exitCode;
+    if (typeof direct === "number" && Number.isFinite(direct))
+        return direct;
+    if (typeof direct === "string" && direct.trim() !== "") {
+        const parsed = Number(direct);
+        if (Number.isFinite(parsed))
+            return parsed;
+    }
+    const bracket = /\[exit code:\s*(-?\d+)\]/i.exec(outputText);
+    if (bracket)
+        return Number(bracket[1]);
+    const plain = /(?:^|\n)exit(?:\s+code)?\s*[:=]\s*(-?\d+)\b/i.exec(outputText);
+    if (plain)
+        return Number(plain[1]);
+    return undefined;
+}
+function statusFromPart(part, outputText) {
+    const state = part.state;
+    if (!state)
+        return { status: "unknown", errorText: "" };
+    const errorText = stringify(state.error).trim();
+    const exitCode = parseExitCode(part, outputText);
+    if (state.status === "error") {
+        return { status: "failure", exitCode, errorText: errorText || outputText };
+    }
+    if (exitCode !== undefined) {
+        return {
+            status: exitCode === 0 ? "success" : "failure",
+            exitCode,
+            errorText: exitCode === 0 ? "" : errorText || outputText,
+        };
+    }
+    if (state.status === "completed") {
+        // Trust the host's completed state unless an explicit non-zero exit code or
+        // error status says otherwise. Output text can legitimately contain words
+        // such as "error" while a grep/audit/test command still succeeds.
+        return { status: "success", errorText: "" };
+    }
+    return { status: "unknown", exitCode, errorText };
+}
+function normalizeCommand(command) {
+    return command
+        .replace(/\s+/g, " ")
+        .replace(/\s+2>&1\b/g, "")
+        .replace(/\s+--verbose\b/g, "")
+        .trim();
+}
+export function normalizeErrorFingerprint(errorText) {
+    return errorText
+        .toLowerCase()
+        .replace(/\x1b\[[0-9;]*m/g, "")
+        .replace(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/gi, "<uuid>")
+        .replace(/\b0x[0-9a-f]+\b/gi, "<hex>")
+        .replace(/\b[0-9a-f]{12,}\b/gi, "<id>")
+        .replace(/\b\d{4}-\d{2}-\d{2}[t\s][0-9:.+-z]+\b/gi, "<time>")
+        .replace(/:\d{2,5}\b/g, ":<n>")
+        // Keep short semantic numbers such as HTTP 404 vs 500 or exit 1 vs 2.
+        // Normalize only longer volatile IDs/PIDs/counts to avoid merging distinct
+        // root causes into one circuit-breaker fingerprint.
+        .replace(/\b\d{4,}\b/g, "<n>")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 240);
+}
+function classifyCommand(command, toolName) {
+    const c = normalizeCommand(command).toLowerCase();
+    const t = toolName.toLowerCase();
+    const kinds = new Set();
+    if (/(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/.test(c) ||
+        /(?:^|\s)(?:pytest|py\.test|python(?:3)?\s+-m\s+(?:pytest|unittest)|go\s+test|cargo\s+(?:test|nextest\s+run)|node\s+--test|jest|vitest|dotnet\s+test|phpunit|make\s+test)\b/.test(c) ||
+        /(?:^|\s)(?:mvn|mvnw)\b[^\n;&|]*(?:\btest\b|\bverify\b)/.test(c) ||
+        /(?:^|\s)(?:gradle|gradlew)\b[^\n;&|]*\btest\b/.test(c)) {
+        kinds.add("test");
+    }
+    if (/(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?build\b/.test(c) ||
+        /(?:^|\s)(?:cargo\s+build|go\s+build|dotnet\s+build|make\s+build)\b/.test(c) ||
+        /(?:^|\s)(?:mvn|mvnw)\b[^\n;&|]*(?:\bpackage\b|\binstall\b)/.test(c) ||
+        /(?:^|\s)(?:gradle|gradlew)\b[^\n;&|]*\bbuild\b/.test(c)) {
+        kinds.add("build");
+    }
+    if (/(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?typecheck\b/.test(c) ||
+        /(?:^|\s)(?:tsc\b[^\n;&|]*--noemit|mypy|pyright)\b/.test(c)) {
+        kinds.add("typecheck");
+    }
+    if (/(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?lint\b/.test(c) ||
+        /(?:^|\s)(?:eslint|ruff|flake8|golangci-lint|cargo\s+clippy)\b/.test(c)) {
+        kinds.add("lint");
+    }
+    if (/(?:^|\s)(?:npm|pnpm|yarn)\s+audit\b/.test(c) ||
+        /(?:^|\s)(?:pip-audit|cargo\s+audit|govulncheck|bundle\s+audit)\b/.test(c)) {
+        kinds.add("audit");
+    }
+    if (/\bgit\s+push\b/.test(c) || /(?:push|update_ref|updateref)/.test(t)) {
+        kinds.add("git-push");
+    }
+    if (/\bgit\s+status\b/.test(c))
+        kinds.add("git-status");
+    if (/\bgit\s+(?:show|diff|blame|merge-base|rev-parse)\b[^\n;&|]*(?:main|master|origin\/|head\^|head~|[0-9a-f]{7,40})/i.test(command) ||
+        /\bgit\s+(?:checkout|switch)\s+(?:--detach\s+)?(?:main|master|origin\/[^\s]+)/i.test(command) ||
+        /\bgit\s+worktree\b/i.test(command) ||
+        /\b(?:baseline|before-change|pre-change)\b/i.test(command)) {
+        kinds.add("baseline");
+    }
+    if (/(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:install|add)\b/.test(c) ||
+        /(?:^|\s)(?:pip(?:3)?\s+install|python(?:3)?\s+-m\s+pip\s+install|cargo\s+add|go\s+get)\b/.test(c)) {
+        kinds.add("install");
+    }
+    if (isDestructiveCommand(command))
+        kinds.add("destructive-operation");
+    if (kinds.size === 0)
+        kinds.add("generic");
+    return [...kinds];
+}
+export function isVerificationFailureMask(command) {
+    return /(?:\|\|\s*(?:true\b|:(?=\s|$)|exit\s+0\b)|;\s*exit\s+0\b)/i.test(command);
+}
+function isRecursiveForceRemove(command) {
+    const candidates = command.match(/(?:^|[;&|]\s*)(?:sudo\s+)?rm\s+[^\n;&|]+/gi) ?? [];
+    return candidates.some((candidate) => {
+        const flags = candidate.match(/(?:^|\s)-[a-z]+\b|--(?:recursive|force)\b/gi) ?? [];
+        const recursive = flags.some((flag) => /--recursive|^-[a-z]*r/i.test(flag.trim()));
+        const forced = flags.some((flag) => /--force|^-[a-z]*f/i.test(flag.trim()));
+        return recursive && forced;
+    });
+}
+export function isDestructiveCommand(command) {
+    return (/\bgit\s+reset\s+--hard\b/i.test(command) ||
+        /\bgit\s+clean\b[^\n;&|]*(?:-[a-z]*f[a-z]*|--force)(?=\s|$|[;&|])/i.test(command) ||
+        /\bgit\s+push\b[^\n;&|]*(?:--force(?:-with-lease)?|\s-f(?:\s|$))/i.test(command) ||
+        isRecursiveForceRemove(command) ||
+        /\b(?:drop\s+(?:database|schema|table)|truncate\s+table)\b/i.test(command) ||
+        /\bterraform\s+destroy\b/i.test(command) ||
+        /\bkubectl\s+delete\s+(?:namespace|ns)\b/i.test(command) ||
+        /\bdocker\s+system\s+prune\b[^\n;&|]*(?:-a\b|--all\b)/i.test(command) ||
+        /\bnpm\s+unpublish\b/i.test(command) ||
+        /\bgh\s+repo\s+delete\b/i.test(command));
+}
+function hasFileMutation(part) {
+    const input = part.state?.input;
+    if (!input)
+        return false;
+    if (["content", "new_string", "newString", "patch", "patchText"].some((key) => typeof input[key] === "string" && input[key].length > 0)) {
+        return true;
+    }
+    return Boolean(extractLikelyShellMutation(input));
+}
+function recordFromPart(part, sequence) {
+    if (part.type !== "tool" || !part.state)
+        return [];
+    const command = commandFromPart(part);
+    const toolName = toolNameFromPart(part);
+    const outputText = stringify(part.state.output ?? part.state.metadata?.output).trim();
+    const outcome = statusFromPart(part, outputText);
+    const baseSignature = `${toolName}:${stableStringify(part.state.input ?? {})}`;
+    const records = [];
+    const kinds = classifyCommand(command, toolName);
+    const verificationKinds = new Set([
+        "test",
+        "build",
+        "typecheck",
+        "lint",
+        "audit",
+    ]);
+    const verificationKindCount = kinds.filter((kind) => verificationKinds.has(kind)).length;
+    const nonSequentialCompound = verificationKindCount > 1 && /;|\|\|/.test(command);
+    const pipedWithoutPipefail = /(?:^|[^|])\|(?!\|)/.test(command) &&
+        !/\bset\s+-[a-z]*o\s+pipefail\b/i.test(command);
+    for (const kind of kinds) {
+        const commandStatus = command &&
+            outcome.status === "success" &&
+            outcome.exitCode === undefined
+            ? "unknown"
+            : outcome.status;
+        const evidenceStatus = command &&
+            verificationKinds.has(kind) &&
+            isVerificationFailureMask(command) ||
+            (verificationKinds.has(kind) &&
+                (nonSequentialCompound || pipedWithoutPipefail))
+            ? "unknown"
+            : commandStatus;
+        records.push({
+            kind,
+            status: evidenceStatus,
+            sequence,
+            toolName,
+            command: command || undefined,
+            signature: `${baseSignature}:${kind}`,
+            output: outputText || undefined,
+            error: evidenceStatus === "unknown" && outcome.status === "success"
+                ? isVerificationFailureMask(command)
+                    ? "verification exit status was masked"
+                    : nonSequentialCompound || pipedWithoutPipefail
+                        ? "compound/piped command cannot prove each verification succeeded"
+                        : "command completed without an explicit exit code"
+                : outcome.errorText || undefined,
+            exitCode: outcome.exitCode,
+            errorFingerprint: outcome.status === "failure"
+                ? normalizeErrorFingerprint(outcome.errorText || outputText)
+                : undefined,
+            ambiguousOutcome: outcome.status === "failure" &&
+                verificationKinds.has(kind) &&
+                verificationKindCount > 1,
+        });
+    }
+    if (hasFileMutation(part)) {
+        records.push({
+            kind: "file-mutation",
+            status: outcome.status === "failure"
+                ? "failure"
+                : outcome.status === "success"
+                    ? "success"
+                    : "unknown",
+            sequence,
+            toolName,
+            command: command || undefined,
+            signature: `${baseSignature}:mutation`,
+            output: outputText || undefined,
+            error: outcome.errorText || undefined,
+            exitCode: outcome.exitCode,
+            errorFingerprint: outcome.status === "failure"
+                ? normalizeErrorFingerprint(outcome.errorText || outputText)
+                : undefined,
+        });
+    }
+    return records;
+}
+const VERIFICATION_KINDS = new Set([
+    "test",
+    "build",
+    "typecheck",
+    "lint",
+    "audit",
+    "git-push",
+    "git-status",
+    "baseline",
+]);
+export function collectTurnEvidence(currentTurn) {
+    const records = [];
+    let sequence = 0;
+    for (const message of currentTurn) {
+        for (const part of message.parts) {
+            records.push(...recordFromPart(part, sequence++));
+        }
+    }
+    return {
+        records,
+        successfulVerifications: records.filter((record) => record.status === "success" && VERIFICATION_KINDS.has(record.kind)),
+        failures: records.filter((record) => record.status === "failure"),
+        fileMutations: records.filter((record) => record.kind === "file-mutation"),
+    };
+}
+export function latestEvidence(evidence, kind) {
+    if (!evidence)
+        return undefined;
+    return evidence.records
+        .filter((record) => record.kind === kind)
+        .sort((a, b) => b.sequence - a.sequence)[0];
+}
+export function hasSuccessfulEvidence(evidence, kind) {
+    return Boolean(evidence?.records.some((record) => record.kind === kind && record.status === "success"));
+}
+export function hasSuccessfulVerification(evidence) {
+    return Boolean(evidence?.successfulVerifications.length);
+}

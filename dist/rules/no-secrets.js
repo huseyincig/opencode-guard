@@ -8,6 +8,12 @@ export const SECRET_PATTERNS = [
     { regex: /-----BEGIN\s+(?:RSA\s+|OPENSSH\s+|EC\s+|DSA\s+|PGP\s+)?PRIVATE\s+KEY-----/, name: "Private Key Header (PEM/SSH)" },
     { regex: /\b(?:postgres|mysql|mongodb(?:\+srv)?):\/\/[^:\s'"]+:([^@\s'"]+)@[a-zA-Z0-9.-]+(?::[0-9]+)?\/[a-zA-Z0-9_.-]+/, name: "Database Connection String with Password" },
     { regex: /\beyJ[a-zA-Z0-9_-]{15,}\.eyJ[a-zA-Z0-9_-]{15,}\.[a-zA-Z0-9_-]{15,}\b/, name: "JSON Web Token (JWT)" },
+    { regex: /\bnpm_[a-zA-Z0-9]{32,}\b/, name: "npm Access Token (npm_...)" },
+    { regex: /\bglpat-[a-zA-Z0-9_-]{20,}\b/, name: "GitLab Personal Access Token (glpat-...)" },
+    { regex: /\bAIza[0-9A-Za-z_-]{35}\b/, name: "Google API Key (AIza...)" },
+    { regex: /\b(?:sk|rk)_live_[0-9A-Za-z]{20,}\b/, name: "Stripe Live Secret Key" },
+    { regex: /\b(?:_authToken|npmAuthToken)\s*=\s*["']?([A-Za-z0-9._~-]{20,})["']?/i, name: "npm Registry Auth Token" },
+    { regex: /\bAuthorization\s*[:=]\s*["']?Bearer\s+([A-Za-z0-9._~-]{24,})["']?/i, name: "Bearer Authorization Token" },
 ];
 function isSafeFile(filePath) {
     if (!filePath)

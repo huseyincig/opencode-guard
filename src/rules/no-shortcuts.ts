@@ -34,12 +34,31 @@ export const DEFAULT_HEDGING_PATTERNS = [
   "temporary",
 ];
 
+const HIGH_CONFIDENCE_HEDGING_PATTERNS = new Set([
+  "for now",
+  "revisit later",
+  "revisit this",
+  "come back to this",
+  "should be replaced",
+  "should be updated",
+  "should be revisited",
+  "will need to be",
+  "good enough",
+  "quick and dirty",
+  "temporary fix",
+  "temporary solution",
+]);
+
 export const DEFAULT_CODE_MARKERS = ["TODO", "FIXME", "HACK", "XXX"];
 
 export const DEFAULT_CODE_MARKER_REGEXES: { marker: string; regex: RegExp }[] =
   DEFAULT_CODE_MARKERS.map((marker) => ({
     marker,
-    regex: new RegExp(`\\b${marker}\\b`),
+    // Marker words are only meaningful as comments. Do not flag identifiers,
+    // string literals, fixture data, or documentation examples.
+    regex: new RegExp(
+      `(?:\\/\\/|#|\\/\\*+|\\*|<!--|--)\\s*${marker}\\b`
+    ),
   }));
 
 export const DEFAULT_EXCEPTIONS = [
@@ -69,6 +88,96 @@ function extractSnippet(text: string, matchIndex: number, matchLen: number): str
   return snippet;
 }
 
+function hasLexicalBoundaries(
+  text: string,
+  start: number,
+  length: number
+): boolean {
+  const word = /[\p{L}\p{N}_]/u;
+  const before = start > 0 ? text[start - 1] : "";
+  const after = start + length < text.length ? text[start + length] : "";
+  return (!before || !word.test(before)) && (!after || !word.test(after));
+}
+
+function extractCodeComments(code: string): string {
+  const comments: string[] = [];
+  let i = 0;
+
+  const readUntil = (endToken: string): string => {
+    const start = i;
+    const end = code.indexOf(endToken, i);
+    i = end === -1 ? code.length : end + endToken.length;
+    return code.slice(start, i);
+  };
+
+  while (i < code.length) {
+    const ch = code[i];
+
+    if (ch === "'" || ch === '"' || ch === "`") {
+      const quote = ch;
+      const triple =
+        quote !== "`" && code[i + 1] === quote && code[i + 2] === quote;
+      i += triple ? 3 : 1;
+      while (i < code.length) {
+        if (code[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (
+          triple &&
+          code[i] === quote &&
+          code[i + 1] === quote &&
+          code[i + 2] === quote
+        ) {
+          i += 3;
+          break;
+        }
+        if (!triple && code[i] === quote) {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+
+    if (code.startsWith("<!--", i)) {
+      i += 4;
+      comments.push(`<!--${readUntil("-->")}`);
+      continue;
+    }
+
+    if (code.startsWith("/*", i)) {
+      i += 2;
+      comments.push(`/*${readUntil("*/")}`);
+      continue;
+    }
+
+    if (code.startsWith("//", i) || ch === "#") {
+      const start = i;
+      const end = code.indexOf("\n", i);
+      i = end === -1 ? code.length : end;
+      comments.push(code.slice(start, i));
+      continue;
+    }
+
+    if (
+      code.startsWith("--", i) &&
+      (i === 0 || /\s/.test(code[i - 1] ?? ""))
+    ) {
+      const start = i;
+      const end = code.indexOf("\n", i);
+      i = end === -1 ? code.length : end;
+      comments.push(code.slice(start, i));
+      continue;
+    }
+
+    i++;
+  }
+
+  return comments.join("\n");
+}
+
 /**
  * Checks if match at [pos, pos + len) is enclosed within any known exception substring.
  */
@@ -94,10 +203,13 @@ export const noShortcutsRule: GuardRule = {
   id: "quality/no-shortcuts",
   description: "Detects hedging language, shortcut phrases, or deferred work patterns in code and responses.",
   inspect: (context: TurnInspectionContext): RuleResult => {
-    const patterns = [
-      ...DEFAULT_HEDGING_PATTERNS,
-      ...(context.ruleConfig.customPhrases ?? []).filter((phrase) => phrase.trim().length > 0),
-    ];
+    const customPhrases = (context.ruleConfig.customPhrases ?? []).filter(
+      (phrase) => phrase.trim().length > 0
+    );
+    const customPhraseSet = new Set(
+      customPhrases.map((phrase) => phrase.trim().toLowerCase())
+    );
+    const patterns = [...DEFAULT_HEDGING_PATTERNS, ...customPhrases];
     const exceptions = [
       ...DEFAULT_EXCEPTIONS,
       ...(context.ruleConfig.exceptions
@@ -106,9 +218,14 @@ export const noShortcutsRule: GuardRule = {
     ];
 
     const findings: RuleFinding[] = [];
+    const blocking: RuleFinding[] = [];
     const seen = new Set<string>();
 
-    const checkText = (text: string, source: string) => {
+    const checkText = (
+      text: string,
+      source: string,
+      inspectCodeMarkers = false
+    ) => {
       if (!text || typeof text !== "string") return;
       const lowerText = text.toLowerCase();
 
@@ -122,36 +239,53 @@ export const noShortcutsRule: GuardRule = {
           const idx = lowerText.indexOf(lowerPattern, searchFrom);
           if (idx === -1) break;
 
-          // Only skip this match if it lies inside a legitimate exception (e.g. TemporaryDirectory)
-          if (!isWithinException(text, idx, pattern.length, exceptions)) {
+          // Skip identifier/subword matches (temporaryValue, isHardcoded, etc.)
+          // and known legitimate exception names such as TemporaryDirectory.
+          if (
+            hasLexicalBoundaries(text, idx, pattern.length) &&
+            !isWithinException(text, idx, pattern.length, exceptions)
+          ) {
             seen.add(lowerPattern);
             const snippet = extractSnippet(text, idx, pattern.length);
-            findings.push({
+            const shouldBlock =
+              customPhraseSet.has(lowerPattern) ||
+              HIGH_CONFIDENCE_HEDGING_PATTERNS.has(lowerPattern);
+            const finding: RuleFinding = {
               ruleId: "quality/no-shortcuts",
               pattern,
               messageSnippet: snippet,
               description: `Shortcut/hedging detected in ${source}: "${pattern}" → "${snippet}"`,
-            });
+              confidence: shouldBlock ? "high" : "medium",
+            };
+            findings.push(finding);
+            if (shouldBlock) blocking.push(finding);
             break;
           }
           searchFrom = idx + 1;
         }
       }
 
-      // Check case-sensitive code markers (TODO, FIXME, etc.)
-      for (const { marker, regex } of DEFAULT_CODE_MARKER_REGEXES) {
-        if (seen.has(marker)) continue;
+      if (inspectCodeMarkers) {
+        // Check case-sensitive marker comments only in code mutations.
+        for (const { marker, regex } of DEFAULT_CODE_MARKER_REGEXES) {
+          if (seen.has(marker)) continue;
 
-        const match = regex.exec(text);
-        if (match) {
-          seen.add(marker);
-          const snippet = extractSnippet(text, match.index, marker.length);
-          findings.push({
-            ruleId: "quality/no-shortcuts",
-            pattern: marker,
-            messageSnippet: snippet,
-            description: `Code marker detected in ${source}: "${marker}" → "${snippet}"`,
-          });
+          regex.lastIndex = 0;
+          const match = regex.exec(text);
+          if (match) {
+            seen.add(marker);
+            const markerIndex = match.index + match[0].lastIndexOf(marker);
+            const snippet = extractSnippet(text, markerIndex, marker.length);
+            const finding: RuleFinding = {
+              ruleId: "quality/no-shortcuts",
+              pattern: marker,
+              messageSnippet: snippet,
+              description: `Code marker detected in ${source}: "${marker}" → "${snippet}"`,
+              confidence: "high",
+            };
+            findings.push(finding);
+            blocking.push(finding);
+          }
         }
       }
     };
@@ -167,21 +301,41 @@ export const noShortcutsRule: GuardRule = {
         if (part.type === "tool" && part.state?.input) {
           const input = part.state.input;
           if (typeof input.content === "string") {
-            checkText(input.content, "file write content");
+            checkText(
+              extractCodeComments(input.content),
+              "file write comments",
+              true
+            );
           }
           if (typeof input.new_string === "string") {
-            checkText(input.new_string, "file edit");
+            checkText(
+              extractCodeComments(input.new_string),
+              "file edit comments",
+              true
+            );
           }
           if (typeof input.newString === "string") {
-            checkText(input.newString, "file edit");
+            checkText(
+              extractCodeComments(input.newString),
+              "file edit comments",
+              true
+            );
           }
           const patchText = extractAddedPatchLines(input.patchText ?? input.patch);
           if (patchText) {
-            checkText(patchText, "patch added lines");
+            checkText(
+              extractCodeComments(patchText),
+              "patch added comments",
+              true
+            );
           }
           const shellMutation = extractLikelyShellMutation(input);
           if (shellMutation) {
-            checkText(shellMutation, "shell file mutation");
+            checkText(
+              extractCodeComments(shellMutation),
+              "shell file mutation comments",
+              true
+            );
           }
         }
       }
@@ -195,17 +349,22 @@ export const noShortcutsRule: GuardRule = {
       };
     }
 
-    const list = findings.map((f) => `  - "${f.pattern}" → ${f.messageSnippet}`).join("\n");
+    if (blocking.length === 0) {
+      return {
+        ruleId: "quality/no-shortcuts",
+        decision: "pass",
+        findings,
+      };
+    }
+
+    const list = blocking
+      .map((finding) => `  - "${finding.pattern}" → ${finding.messageSnippet}`)
+      .join("\n");
     const remediationPrompt =
       `Shortcut/assumption language detected in this turn:\n${list}\n\n` +
-      `Before stopping, explicitly report to the user each shortcut or assumption. ` +
-      `For each: (1) what exactly you did and where, (2) why you chose this approach, ` +
-      `(3) what a complete solution looks like. Be specific — the user needs to make ` +
-      `an informed judgement call.\n\n` +
-      `No explanation is needed if the flagged expression is itself a preventative ` +
-      `measure against the thing it names (e.g. code that detects a placeholder and ` +
-      `throws, a test asserting no TODO remains, a guard rejecting hardcoded values). ` +
-      `In that case, briefly note it and stop.`;
+      `Before stopping, explicitly report to the user each material shortcut or deferred task. ` +
+      `For each: (1) what exactly remains, (2) why it remains, and (3) what a complete solution requires. ` +
+      `Do not rewrite technically accurate prose merely to avoid a flagged word.`;
 
     return {
       ruleId: "quality/no-shortcuts",

@@ -27,6 +27,14 @@ export const STUB_PATTERNS = [
         regex: /def\s+\w+\s*\(.*?\)\s*:\s*(?:#[^\n]*\n\s*)*pass\b/,
         name: "empty def ...: pass (Python stub)",
     },
+    {
+        regex: /\breturn\s+(?:null|undefined|true|false|\[\]|\{\})\s*;?\s*(?:\/\/|#)\s*(?:TODO|FIXME|stub|placeholder|temporary)\b/i,
+        name: "placeholder constant return",
+    },
+    {
+        regex: /\breturn\s+None\s*(?:#\s*(?:TODO|FIXME|stub|placeholder|temporary)\b)/i,
+        name: "placeholder return None (Python)",
+    },
 ];
 function extractAddedLines(text) {
     if (typeof text !== "string")

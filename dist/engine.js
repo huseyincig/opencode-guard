@@ -10,13 +10,21 @@ import { noSecretsRule } from "./rules/no-secrets.js";
 import { noGhostDepsRule } from "./rules/no-ghost-deps.js";
 import { circuitBreakerRule } from "./rules/circuit-breaker.js";
 import { noApologyRule } from "./rules/no-apology.js";
+import { noUnverifiedClaimsRule } from "./rules/no-unverified-claims.js";
+import { noSilentFailureRule } from "./rules/no-silent-failure.js";
+import { destructiveOperationsRule } from "./rules/destructive-operations.js";
+import { collectTurnEvidence } from "./evidence.js";
+import { SessionStateStore } from "./state.js";
 export const REMEDIATION_MARKER = "[opencode-guardian remediation]";
 export const BUILTIN_RULES = {
     "discipline/no-evasion": noEvasionRule,
     "discipline/no-apology": noApologyRule,
     "quality/no-shortcuts": noShortcutsRule,
     "integrity/no-stubs": noStubsRule,
+    "integrity/no-unverified-claims": noUnverifiedClaimsRule,
+    "integrity/no-silent-failure": noSilentFailureRule,
     "safety/no-truncation": noTruncationRule,
+    "safety/destructive-operations": destructiveOperationsRule,
     "testing/no-cheat": noCheatRule,
     "security/no-secrets": noSecretsRule,
     "manifest/no-ghost-deps": noGhostDepsRule,
@@ -24,12 +32,16 @@ export const BUILTIN_RULES = {
 };
 const DEFAULT_CONFIG = {
     enabled: true,
+    remediationBudget: 1,
     rules: {
         "discipline/no-evasion": "error",
         "discipline/no-apology": "error",
         "quality/no-shortcuts": "error",
         "integrity/no-stubs": "error",
+        "integrity/no-unverified-claims": "error",
+        "integrity/no-silent-failure": "error",
         "safety/no-truncation": "error",
+        "safety/destructive-operations": "warn",
         "testing/no-cheat": "error",
         "security/no-secrets": "error",
         "manifest/no-ghost-deps": "error",
@@ -62,26 +74,38 @@ export function loadConfig(directory) {
     }
     return DEFAULT_CONFIG;
 }
+function isSyntheticUserMessage(message) {
+    return (message.info.role === "user" &&
+        Boolean(message.parts?.some((part) => part.synthetic === true)));
+}
 function isGuardianRemediationMessage(message) {
     if (message.info.role !== "user")
         return false;
-    return Boolean(message.parts?.some((part) => part.synthetic === true ||
-        (part.type === "text" &&
-            typeof part.text === "string" &&
-            part.text.trimStart().startsWith(REMEDIATION_MARKER))));
+    return Boolean(message.parts?.some((part) => part.type === "text" &&
+        typeof part.text === "string" &&
+        part.text.trimStart().startsWith(REMEDIATION_MARKER)));
 }
 export function extractCurrentTurn(messages) {
     const firstAgent = messages.find((m) => typeof m.info?.agent === "string" && m.info.agent.length > 0)?.info.agent;
     const isSubagent = Boolean(firstAgent && firstAgent !== "orchestrator");
     const lastUserMessage = messages.findLast((m) => m.info.role === "user");
     const isRemediationResponse = Boolean(lastUserMessage && isGuardianRemediationMessage(lastUserMessage));
-    const lastHumanUserIndex = messages.findLastIndex((m) => m.info.role === "user" && !isGuardianRemediationMessage(m));
+    const lastHumanUserIndex = messages.findLastIndex((m) => m.info.role === "user" &&
+        !isGuardianRemediationMessage(m) &&
+        !isSyntheticUserMessage(m));
+    const lastHumanUser = lastHumanUserIndex >= 0 ? messages[lastHumanUserIndex] : undefined;
     const currentTurn = lastHumanUserIndex < 0 ? messages : messages.slice(lastHumanUserIndex);
     return {
         isSubagent,
         isRemediationResponse,
         currentTurn,
+        turnKey: lastHumanUser?.info.id ?? "no-human-user",
     };
+}
+function normalizeSeverity(value) {
+    return value === "error" || value === "warn" || value === "off"
+        ? value
+        : undefined;
 }
 function sanitizeRuleConfig(setting) {
     if (!setting || typeof setting !== "object" || Array.isArray(setting)) {
@@ -108,8 +132,16 @@ export class GuardEngine {
     config;
     rules = new Map();
     inspectedMessages = new Map();
+    sessionState = new SessionStateStore();
     constructor(config) {
-        this.config = config ?? { enabled: true };
+        this.config = {
+            ...DEFAULT_CONFIG,
+            ...(config ?? {}),
+            rules: {
+                ...(DEFAULT_CONFIG.rules ?? {}),
+                ...(config?.rules ?? {}),
+            },
+        };
         for (const rule of Object.values(BUILTIN_RULES)) {
             this.registerRule(rule);
         }
@@ -119,6 +151,7 @@ export class GuardEngine {
     }
     forgetSession(sessionID) {
         this.inspectedMessages.delete(sessionID);
+        this.sessionState.forget(sessionID);
     }
     async inspect(sessionID, directory, messages) {
         if (this.config.enabled === false || messages.length === 0) {
@@ -129,17 +162,45 @@ export class GuardEngine {
         if (!messageID || this.inspectedMessages.get(sessionID) === messageID) {
             return { decision: "pass", results: [] };
         }
-        const { isSubagent, isRemediationResponse, currentTurn } = extractCurrentTurn(messages);
+        const { isSubagent, isRemediationResponse, currentTurn, turnKey, } = extractCurrentTurn(messages);
         if (isRemediationResponse) {
             this.inspectedMessages.set(sessionID, messageID);
             return { decision: "pass", results: [] };
         }
+        const evidence = collectTurnEvidence(currentTurn);
         const results = [];
         const blockingPrompts = [];
+        const blockingResults = [];
         for (const [ruleId, rule] of this.rules.entries()) {
             const ruleSetting = this.config.rules?.[ruleId];
             const ruleConfig = sanitizeRuleConfig(typeof ruleSetting === "object" ? ruleSetting : {});
-            const severity = typeof ruleSetting === "string" ? ruleSetting : ruleConfig.severity;
+            const defaultSetting = DEFAULT_CONFIG.rules?.[ruleId];
+            const configuredSeverity = typeof ruleSetting === "string"
+                ? normalizeSeverity(ruleSetting)
+                : normalizeSeverity(ruleSetting &&
+                    typeof ruleSetting === "object" &&
+                    !Array.isArray(ruleSetting)
+                    ? ruleSetting.severity
+                    : undefined);
+            const explicitlyInvalidSeverity = (typeof ruleSetting === "string" &&
+                normalizeSeverity(ruleSetting) === undefined) ||
+                (ruleSetting &&
+                    typeof ruleSetting === "object" &&
+                    !Array.isArray(ruleSetting) &&
+                    "severity" in ruleSetting &&
+                    ruleSetting.severity !== undefined &&
+                    normalizeSeverity(ruleSetting.severity) ===
+                        undefined);
+            const defaultSeverity = normalizeSeverity(defaultSetting) ??
+                normalizeSeverity(defaultSetting && typeof defaultSetting === "object"
+                    ? defaultSetting.severity
+                    : undefined) ??
+                "error";
+            // Invalid explicit severity is a config error. Fail open to warn instead
+            // of unexpectedly turning a typo into a blocking rule.
+            const severity = explicitlyInvalidSeverity
+                ? "warn"
+                : configuredSeverity ?? defaultSeverity;
             if (severity === "off")
                 continue;
             const context = {
@@ -149,6 +210,7 @@ export class GuardEngine {
                 currentTurn,
                 isSubagent,
                 ruleConfig,
+                evidence,
             };
             const res = await rule.inspect(context);
             results.push(res);
@@ -156,10 +218,30 @@ export class GuardEngine {
                 res.decision === "block" &&
                 res.remediationPrompt) {
                 blockingPrompts.push(res.remediationPrompt);
+                blockingResults.push(res);
             }
         }
         this.inspectedMessages.set(sessionID, messageID);
         if (blockingPrompts.length > 0) {
+            const configuredBudget = typeof this.config.remediationBudget === "number" &&
+                Number.isFinite(this.config.remediationBudget)
+                ? Math.floor(this.config.remediationBudget)
+                : 1;
+            const budget = Math.max(0, Math.min(5, configuredBudget));
+            const fingerprint = blockingResults
+                .map((result) => {
+                const findingKey = result.findings
+                    .map((finding) => `${finding.pattern}:${finding.messageSnippet}`)
+                    .sort()
+                    .join("|");
+                return `${result.ruleId}:${findingKey}`;
+            })
+                .sort()
+                .join("||");
+            if (!this.sessionState.canRemediate(sessionID, turnKey, fingerprint, budget)) {
+                return { decision: "pass", results };
+            }
+            this.sessionState.recordRemediation(sessionID, turnKey, fingerprint);
             return {
                 decision: "block",
                 results,

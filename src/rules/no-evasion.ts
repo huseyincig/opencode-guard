@@ -1,5 +1,6 @@
 import type { GuardRule, RuleFinding, RuleResult, TurnInspectionContext } from "../types.js";
 import { sanitizeProseForInspection } from "../prose.js";
+import { hasSuccessfulEvidence } from "../evidence.js";
 
 /**
  * Dismissal phrases matched case-insensitively.
@@ -59,6 +60,33 @@ export const DEFAULT_PATTERNS = [
   "separate concern from",
 ];
 
+function canBeSupportedByBaseline(pattern: string): boolean {
+  const lower = pattern.toLowerCase();
+  return (
+    lower.includes("pre-existing") ||
+    lower.includes("preexisting") ||
+    lower.includes("already broken") ||
+    lower.includes("already failing") ||
+    lower.includes("already present") ||
+    lower.includes("broken on main") ||
+    lower.includes("unrelated") ||
+    lower.includes("not related") ||
+    lower.includes("not caused") ||
+    lower.includes("not introduced") ||
+    lower.includes("not something")
+  );
+}
+
+function isNegatedUnrelatedPhrase(
+  text: string,
+  matchIndex: number,
+  pattern: string
+): boolean {
+  if (!pattern.toLowerCase().startsWith("unrelated")) return false;
+  const prefix = text.slice(Math.max(0, matchIndex - 12), matchIndex);
+  return /(?:\bnot|n't)\s+$/i.test(prefix);
+}
+
 function extractSnippet(text: string, matchIndex: number, matchLen: number): string {
   const maxPerSide = 100;
   const start = Math.max(0, matchIndex - maxPerSide);
@@ -99,16 +127,37 @@ export const noEvasionRule: GuardRule = {
           const lowerPattern = pattern.toLowerCase();
           if (seenPatterns.has(lowerPattern)) continue;
 
-          const matchIdx = lowerText.indexOf(lowerPattern);
-          if (matchIdx !== -1) {
+          let searchFrom = 0;
+          while (searchFrom < lowerText.length) {
+            const matchIdx = lowerText.indexOf(lowerPattern, searchFrom);
+            if (matchIdx === -1) break;
+            if (isNegatedUnrelatedPhrase(cleanText, matchIdx, pattern)) {
+              searchFrom = matchIdx + lowerPattern.length;
+              continue;
+            }
+
+            if (
+              canBeSupportedByBaseline(pattern) &&
+              hasSuccessfulEvidence(context.evidence, "baseline")
+            ) {
+              break;
+            }
+
             seenPatterns.add(lowerPattern);
             const snippet = extractSnippet(cleanText, matchIdx, pattern.length);
             findings.push({
               ruleId: "discipline/no-evasion",
               pattern,
               messageSnippet: snippet,
-              description: `Evasion phrase detected: "${pattern}" → "${snippet}"`,
+              description: canBeSupportedByBaseline(pattern)
+                ? `Baseline/pre-existing claim lacks a successful baseline check: "${pattern}" → "${snippet}"`
+                : `Evasion phrase detected: "${pattern}" → "${snippet}"`,
+              evidence: canBeSupportedByBaseline(pattern)
+                ? ["No successful baseline comparison observed in this turn"]
+                : undefined,
+              confidence: "high",
             });
+            break;
           }
         }
       }
@@ -129,7 +178,8 @@ export const noEvasionRule: GuardRule = {
       `For each: (1) the exact symptom (error message, failing test, unexpected behavior), ` +
       `(2) the evidence it is pre-existing or unrelated (commit hash, line on main, a repro on main), ` +
       `(3) what you would investigate further if asked. Be specific — the user needs to make an informed judgement call.\n\n` +
-      `Recommended: if this is a true positive, ask the user whether to fix it now or log it as a separate task.`;
+      `If you claim the issue is pre-existing or unrelated, verify that claim against a baseline/main revision when possible. ` +
+      `If it is genuinely outside the user-requested scope, state the concrete scope boundary without dismissing the symptom.`;
 
     return {
       ruleId: "discipline/no-evasion",

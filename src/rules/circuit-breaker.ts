@@ -1,156 +1,179 @@
-import type { GuardRule, RuleFinding, RuleResult, TurnInspectionContext } from "../types.js";
+import type {
+  EvidenceRecord,
+  GuardRule,
+  RuleFinding,
+  RuleResult,
+  TurnInspectionContext,
+} from "../types.js";
+import { collectTurnEvidence } from "../evidence.js";
 
-function stringifyError(err: unknown): string {
-  if (!err) return "";
-  if (typeof err === "string") return err;
-  if (typeof err === "object") {
-    if ("message" in err && typeof (err as { message?: unknown }).message === "string") {
-      return (err as { message: string }).message;
-    }
-    try {
-      return JSON.stringify(err);
-    } catch {
-      return String(err);
-    }
+function commandFamily(record: EvidenceRecord): string {
+  const command = record.command?.trim().toLowerCase() ?? "";
+  if (!command) return record.toolName.toLowerCase();
+
+  const cleaned = command
+    .replace(/\s+2>&1\b/g, "")
+    .replace(/\s+--verbose\b/g, "")
+    .replace(/\s+-v\b/g, "")
+    .trim();
+
+  const patterns = [
+    /\b(npm\s+(?:run\s+)?[a-z0-9:_-]+)/,
+    /\b(pnpm\s+(?:run\s+)?[a-z0-9:_-]+)/,
+    /\b(yarn\s+(?:run\s+)?[a-z0-9:_-]+)/,
+    /\b(bun\s+(?:run\s+)?[a-z0-9:_-]+)/,
+    /\b(git\s+[a-z-]+)/,
+    /\b(cargo\s+[a-z-]+)/,
+    /\b(go\s+[a-z-]+)/,
+    /\b(python(?:3)?\s+-m\s+[a-z0-9_.-]+)/,
+    /\b(pytest|curl|wget|node|tsc|eslint|ruff|mypy|pyright)\b/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = pattern.exec(cleaned);
+    if (match) return match[1];
   }
-  return String(err);
+
+  return cleaned.split(/\s+/).slice(0, 2).join(" ");
 }
 
-function stableStringify(value: unknown): string {
-  const seen = new WeakSet<object>();
+function primaryRecords(context: TurnInspectionContext): EvidenceRecord[] {
+  const evidence = context.evidence ?? collectTurnEvidence(context.currentTurn);
+  const bySequence = new Map<number, EvidenceRecord>();
 
-  const normalize = (input: unknown): unknown => {
-    if (input === null || typeof input !== "object") return input;
-    if (seen.has(input)) return "[Circular]";
-    seen.add(input);
-
-    if (Array.isArray(input)) return input.map(normalize);
-
-    return Object.fromEntries(
-      Object.entries(input as Record<string, unknown>)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, entry]) => [key, normalize(entry)])
-    );
-  };
-
-  try {
-    return JSON.stringify(normalize(value));
-  } catch {
-    return String(value);
-  }
-}
-
-interface ToolFailure {
-  signature: string;
-  errorText: string;
-}
-
-function extractToolFailures(context: TurnInspectionContext): ToolFailure[] {
-  const failures: ToolFailure[] = [];
-
-  for (const msg of context.currentTurn) {
-    for (const part of msg.parts) {
-      if (part.type !== "tool") continue;
-      const state = part.state;
-      if (!state) continue;
-
-      let failed = false;
-      let rawText = "";
-
-      if (state.status === "error") {
-        failed = true;
-        rawText = stringifyError(state.error);
-      } else if (state.status === "completed") {
-        const exitValue = state.metadata?.exit ?? state.exitCode;
-        const exitNum =
-          typeof exitValue === "number"
-            ? exitValue
-            : typeof exitValue === "string" && exitValue.trim() !== ""
-              ? Number(exitValue)
-              : Number.NaN;
-
-        const outputText =
-          typeof state.output === "string"
-            ? state.output
-            : typeof state.metadata?.output === "string"
-              ? (state.metadata.output as string)
-              : "";
-
-        const exitMatch = /\[exit code:\s*(-?\d+)\]/i.exec(outputText);
-        const outputExit = exitMatch ? Number(exitMatch[1]) : Number.NaN;
-
-        if (
-          (!Number.isNaN(exitNum) && exitNum !== 0) ||
-          (!Number.isNaN(outputExit) && outputExit !== 0)
-        ) {
-          failed = true;
-          rawText = outputText || stringifyError(state.error);
-        }
-      }
-
-      if (!failed) continue;
-
-      const errorText = rawText.trim();
-      if (errorText.length <= 10 || errorText === "[object Object]") continue;
-
-      const toolName =
-        typeof part.tool === "string"
-          ? part.tool
-          : typeof part.name === "string"
-            ? part.name
-            : "tool";
-      const signature = `${toolName}:${stableStringify(state.input ?? {})}`;
-
-      failures.push({
-        signature,
-        errorText: errorText.replace(/\s+/g, " ").slice(0, 200),
-      });
+  for (const record of evidence.records) {
+    if (record.kind === "file-mutation") continue;
+    if (!bySequence.has(record.sequence)) {
+      bySequence.set(record.sequence, record);
     }
   }
 
-  return failures;
+  return [...bySequence.values()];
 }
 
 export const circuitBreakerRule: GuardRule = {
   id: "runtime/circuit-breaker",
-  description: "Detects infinite error loops and trips the breaker when the agent repeats the same failing tool invocation.",
+  description:
+    "Detects repeated failing invocations and repeated root-cause error fingerprints without progress.",
   inspect: (context: TurnInspectionContext): RuleResult => {
-    const failures = extractToolFailures(context);
-    if (failures.length < 3) {
-      return { ruleId: "runtime/circuit-breaker", decision: "pass", findings: [] };
-    }
+    const records = primaryRecords(context).sort(
+      (a, b) => a.sequence - b.sequence
+    );
+    const findings: RuleFinding[] = [];
 
-    const counts = new Map<string, { count: number; errorText: string }>();
-    for (const failure of failures) {
-      const current = counts.get(failure.signature);
-      counts.set(failure.signature, {
+    const exactCounts = new Map<
+      string,
+      { count: number; last: EvidenceRecord }
+    >();
+    for (const record of records) {
+      const family = commandFamily(record);
+
+      if (record.status === "success") {
+        for (const [signature, state] of [...exactCounts.entries()]) {
+          if (commandFamily(state.last) === family) {
+            exactCounts.delete(signature);
+          }
+        }
+        continue;
+      }
+
+      if (record.status !== "failure") continue;
+      const current = exactCounts.get(record.signature);
+      exactCounts.set(record.signature, {
         count: (current?.count ?? 0) + 1,
-        errorText: current?.errorText ?? failure.errorText,
+        last: record,
       });
     }
 
-    const findings: RuleFinding[] = [];
-    for (const [signature, { count, errorText }] of counts.entries()) {
-      if (count < 3) continue;
-
+    for (const [signature, data] of exactCounts) {
+      if (data.count < 3) continue;
       findings.push({
         ruleId: "runtime/circuit-breaker",
         pattern: "Repeated error loop",
-        messageSnippet: errorText,
-        description: `Same failing tool invocation repeated ${count} times without progress: "${signature.slice(0, 160)}"`,
+        messageSnippet:
+          data.last.error ?? data.last.output ?? "tool invocation failed",
+        description: `Same failing tool invocation repeated ${data.count} times without progress: "${signature.slice(0, 160)}"`,
+        evidence: [
+          `error fingerprint: ${data.last.errorFingerprint ?? "unavailable"}`,
+        ],
+        confidence: "high",
+      });
+    }
+
+    // Progress-aware semantic loop detection. Cosmetic argument changes should
+    // not defeat the breaker when the same command family hits the same
+    // normalized root-cause error repeatedly. A successful invocation in that
+    // family resets the streak.
+    const streaks = new Map<
+      string,
+      { count: number; last: EvidenceRecord }
+    >();
+
+    for (const record of records) {
+      const family = commandFamily(record);
+
+      if (record.status === "success") {
+        for (const key of [...streaks.keys()]) {
+          if (key.startsWith(`${family}::`)) streaks.delete(key);
+        }
+        continue;
+      }
+
+      if (record.status !== "failure" || !record.errorFingerprint) continue;
+
+      const key = `${family}::${record.errorFingerprint}`;
+      const current = streaks.get(key);
+      streaks.set(key, {
+        count: (current?.count ?? 0) + 1,
+        last: record,
+      });
+    }
+
+    for (const [key, data] of streaks) {
+      if (data.count < 3) continue;
+
+      const alreadyCovered = findings.some(
+        (finding) =>
+          finding.messageSnippet ===
+          (data.last.error ?? data.last.output ?? "tool invocation failed")
+      );
+      if (alreadyCovered) continue;
+
+      findings.push({
+        ruleId: "runtime/circuit-breaker",
+        pattern: "Repeated root-cause loop",
+        messageSnippet:
+          data.last.error ?? data.last.output ?? "tool invocation failed",
+        description: `Same command family/root-cause failure repeated ${data.count} times despite argument changes: "${key.slice(0, 180)}"`,
+        evidence: [
+          `normalized fingerprint: ${data.last.errorFingerprint}`,
+        ],
+        confidence: "high",
       });
     }
 
     if (findings.length === 0) {
-      return { ruleId: "runtime/circuit-breaker", decision: "pass", findings: [] };
+      return {
+        ruleId: "runtime/circuit-breaker",
+        decision: "pass",
+        findings: [],
+      };
     }
 
-    const list = findings.map((f) => `  - ${f.description}\n    Last error: ${f.messageSnippet}`).join("\n");
-    const remediationPrompt =
-      `Circuit breaker tripped! Repetitive error loop detected:\n${list}\n\n` +
-      `You repeated the same failing tool invocation 3 or more times without progress. ` +
-      `Stop repeating it, reconsider the hypothesis, investigate the root cause, or ask the user for missing information.`;
+    const list = findings
+      .map(
+        (finding) =>
+          `  - ${finding.description}\n    Last error: ${finding.messageSnippet}`
+      )
+      .join("\n");
 
-    return { ruleId: "runtime/circuit-breaker", decision: "block", findings, remediationPrompt };
+    return {
+      ruleId: "runtime/circuit-breaker",
+      decision: "block",
+      findings,
+      remediationPrompt:
+        `Circuit breaker tripped! Repetitive error loop detected:\n${list}\n\n` +
+        `Stop repeating the same failing approach. Reconsider the hypothesis, inspect the root cause, change strategy, or ask the user for genuinely missing information.`,
+    };
   },
 };

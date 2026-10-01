@@ -14,12 +14,16 @@ export interface GuardRuleConfig {
 export interface GuardConfig {
   enabled?: boolean;
   debug?: boolean;
+  remediationBudget?: number;
   rules?: {
     "discipline/no-evasion"?: Severity | GuardRuleConfig;
     "discipline/no-apology"?: Severity | GuardRuleConfig;
     "quality/no-shortcuts"?: Severity | GuardRuleConfig;
     "integrity/no-stubs"?: Severity | GuardRuleConfig;
+    "integrity/no-unverified-claims"?: Severity | GuardRuleConfig;
+    "integrity/no-silent-failure"?: Severity | GuardRuleConfig;
     "safety/no-truncation"?: Severity | GuardRuleConfig;
+    "safety/destructive-operations"?: Severity | GuardRuleConfig;
     "testing/no-cheat"?: Severity | GuardRuleConfig;
     "security/no-secrets"?: Severity | GuardRuleConfig;
     "manifest/no-ghost-deps"?: Severity | GuardRuleConfig;
@@ -57,6 +61,43 @@ export interface SessionMessage {
   parts: MessagePart[];
 }
 
+export type EvidenceKind =
+  | "test"
+  | "build"
+  | "typecheck"
+  | "lint"
+  | "audit"
+  | "git-push"
+  | "git-status"
+  | "baseline"
+  | "install"
+  | "file-mutation"
+  | "destructive-operation"
+  | "generic";
+
+export type EvidenceStatus = "success" | "failure" | "unknown";
+
+export interface EvidenceRecord {
+  kind: EvidenceKind;
+  status: EvidenceStatus;
+  sequence: number;
+  toolName: string;
+  command?: string;
+  signature: string;
+  output?: string;
+  error?: string;
+  exitCode?: number;
+  errorFingerprint?: string;
+  ambiguousOutcome?: boolean;
+}
+
+export interface TurnEvidence {
+  records: EvidenceRecord[];
+  successfulVerifications: EvidenceRecord[];
+  failures: EvidenceRecord[];
+  fileMutations: EvidenceRecord[];
+}
+
 export interface TurnInspectionContext {
   sessionID: string;
   directory: string;
@@ -64,6 +105,7 @@ export interface TurnInspectionContext {
   currentTurn: SessionMessage[];
   isSubagent?: boolean;
   ruleConfig: GuardRuleConfig;
+  evidence?: TurnEvidence;
 }
 
 export interface RuleFinding {
@@ -71,6 +113,8 @@ export interface RuleFinding {
   pattern: string;
   messageSnippet: string;
   description: string;
+  evidence?: string[];
+  confidence?: "low" | "medium" | "high";
 }
 
 export interface RuleResult {

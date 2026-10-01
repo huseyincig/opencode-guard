@@ -1,11 +1,15 @@
-import type { GuardRule, RuleFinding, RuleResult, TurnInspectionContext } from "../types.js";
+import type {
+  GuardRule,
+  RuleFinding,
+  RuleResult,
+  TurnInspectionContext,
+} from "../types.js";
 import { extractLikelyShellMutation } from "../tool-input.js";
 
 /**
- * Patterns that indicate weakened or cheated tests.
+ * High-confidence patterns that directly disable or bypass tests.
  */
 export const TEST_CHEAT_PATTERNS: { regex: RegExp; name: string }[] = [
-  // JS / TS test skipping
   {
     regex: /\b(?:test|it|describe)\.skip\s*\(/,
     name: "test.skip() / it.skip() (JS/TS)",
@@ -22,7 +26,6 @@ export const TEST_CHEAT_PATTERNS: { regex: RegExp; name: string }[] = [
     regex: /\btest\.todo\s*\(/,
     name: "test.todo() downgrade (JS/TS)",
   },
-  // Python test skipping
   {
     regex: /@pytest\.mark\.skip(?:\s*\(.*\))?/,
     name: "@pytest.mark.skip decorator (Python)",
@@ -35,17 +38,14 @@ export const TEST_CHEAT_PATTERNS: { regex: RegExp; name: string }[] = [
     regex: /@unittest\.skip(?:\s*\(.*\))?/,
     name: "@unittest.skip decorator (Python)",
   },
-  // Go test skipping
   {
     regex: /\bt\.Skip(?:f|now)?\s*\(/,
     name: "t.Skip() call (Go)",
   },
-  // Rust test skipping
   {
     regex: /#\[ignore(?:\s*\(.*\))?\]/,
     name: "#[ignore] test attribute (Rust)",
   },
-  // Commented-out assertions (JS/TS, Python)
   {
     regex: /(?:\/\/|#)\s*(?:expect\s*\(|assert(?:\.|\s*\()|self\.assert)/,
     name: "commented-out assertion (expect / assert)",
@@ -66,15 +66,33 @@ function isTestFilePath(filePath?: string): boolean {
   );
 }
 
+function isCiFilePath(filePath?: string): boolean {
+  if (!filePath) return false;
+  const lower = filePath.toLowerCase().replace(/\\/g, "/");
+  return (
+    lower.startsWith(".github/workflows/") ||
+    lower.includes("/.github/workflows/") ||
+    lower === ".gitlab-ci.yml" ||
+    lower.endsWith("/.gitlab-ci.yml") ||
+    lower === ".gitlab-ci.yaml" ||
+    lower.endsWith("/.gitlab-ci.yaml") ||
+    lower === ".circleci/config.yml" ||
+    lower.endsWith("/.circleci/config.yml")
+  );
+}
+
 function hasTestContext(code: string): boolean {
-  return /\b(?:describe|it|test|suite)\s*\(|def\s+test_|func\s+Test|#\[test\]/.test(code);
+  return /\b(?:describe|it|test|suite)\s*\(|def\s+test_|func\s+Test|#\[test\]/.test(
+    code
+  );
 }
 
 function extractFilePathFromPatch(patch: unknown): string | undefined {
   if (typeof patch !== "string") return undefined;
   const match = patch.match(/\+\+\+\s+(?:b\/)?([^\s\t\n]+)/);
-  if (match) return match[1];
-  return undefined;
+  if (match && match[1] !== "/dev/null") return match[1];
+  const oldMatch = patch.match(/---\s+(?:a\/)?([^\s\t\n]+)/);
+  return oldMatch && oldMatch[1] !== "/dev/null" ? oldMatch[1] : undefined;
 }
 
 function extractAddedLines(text: unknown): string {
@@ -86,54 +104,242 @@ function extractAddedLines(text: unknown): string {
     .join("\n");
 }
 
+function extractRemovedLines(text: unknown): string {
+  if (typeof text !== "string") return "";
+  return text
+    .split("\n")
+    .filter((line) => line.startsWith("-") && !line.startsWith("---"))
+    .map((line) => line.slice(1))
+    .join("\n");
+}
+
 function extractSnippet(text: string, matchIndex: number, matchLen: number): string {
   const maxPerSide = 80;
   const start = Math.max(0, matchIndex - maxPerSide);
   const end = Math.min(text.length, matchIndex + matchLen + maxPerSide);
 
-  let snippet = text.slice(start, end).replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
+  let snippet = text
+    .slice(start, end)
+    .replace(/\r?\n/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   if (start > 0) snippet = `…${snippet}`;
   if (end < text.length) snippet = `${snippet}…`;
   return snippet;
 }
 
+const STRONG_ASSERTION =
+  /\b(?:expect\s*\([^\n]+\)\.(?:toBe|toEqual|toStrictEqual|toMatchObject|toHaveLength|toContain|toThrow)|assert\.(?:strictEqual|deepEqual|equal|match|throws)\s*\(|self\.assert(?:Equal|True|False|In|Raises)\s*\(|assert\s+[^\n]+(?:==|!=|<=|>=|\sin\s))/i;
+
+const WEAK_ASSERTION =
+  /\b(?:expect\s*\([^\n]+\)\.(?:toBeTruthy|toBeDefined|not\.toBeNull)|assert\.ok\s*\(|assert\s+[A-Za-z_$][\w.$]*\s*$)/im;
+
+function detectAssertionWeakening(
+  patch: string,
+  filePath: string | undefined
+): RuleFinding | undefined {
+  if (!isTestFilePath(filePath)) return undefined;
+
+  const hunks = patch.includes("@@")
+    ? patch.split(/^@@.*$/m).slice(1)
+    : [patch];
+
+  for (const hunk of hunks) {
+    const removed = extractRemovedLines(hunk);
+    const added = extractAddedLines(hunk);
+    if (!STRONG_ASSERTION.test(removed) || !WEAK_ASSERTION.test(added)) {
+      continue;
+    }
+
+    return {
+      ruleId: "testing/no-cheat",
+      pattern: "assertion weakened",
+      messageSnippet: `removed: ${removed.replace(/\s+/g, " ").slice(0, 120)} | added: ${added.replace(/\s+/g, " ").slice(0, 120)}`,
+      description:
+        "A specific assertion was replaced with a materially weaker truthiness/existence assertion in the same patch hunk",
+      confidence: "high",
+    };
+  }
+
+  return undefined;
+}
+
+function coverageValues(lines: string[]): Map<string, number[]> {
+  const values = new Map<string, number[]>();
+  const keyPattern =
+    /\b(fail-under|threshold|branches|functions|statements|lines)\b\s*[:=]?\s*(\d+(?:\.\d+)?)/gi;
+
+  for (const line of lines) {
+    for (const match of line.matchAll(keyPattern)) {
+      const key = match[1].toLowerCase();
+      const value = Number(match[2]);
+      if (!Number.isFinite(value)) continue;
+      const current = values.get(key) ?? [];
+      current.push(value);
+      values.set(key, current);
+    }
+  }
+
+  return values;
+}
+
+function detectCoverageReduction(patch: string): RuleFinding | undefined {
+  const before = coverageValues(extractRemovedLines(patch).split("\n"));
+  const after = coverageValues(extractAddedLines(patch).split("\n"));
+
+  for (const [key, beforeValues] of before) {
+    const afterValues = after.get(key);
+    if (!afterValues?.length) continue;
+
+    const beforeMax = Math.max(...beforeValues);
+    const afterMax = Math.max(...afterValues);
+    if (afterMax >= beforeMax) continue;
+
+    return {
+      ruleId: "testing/no-cheat",
+      pattern: "coverage threshold reduced",
+      messageSnippet: `${key}: ${beforeMax} → ${afterMax}`,
+      description: `Coverage/quality threshold "${key}" was lowered in this patch`,
+      confidence: "high",
+    };
+  }
+
+  return undefined;
+}
+
+function detectsTestFileDeletion(
+  input: Record<string, unknown>,
+  patchRaw: unknown,
+  targetFile: string | undefined
+): boolean {
+  const action =
+    typeof input.action === "string" ? input.action.toLowerCase() : "";
+  if (
+    (action === "delete" || action === "remove") &&
+    isTestFilePath(targetFile)
+  ) {
+    return true;
+  }
+
+  if (
+    typeof patchRaw === "string" &&
+    /\+\+\+\s+\/dev\/null/.test(patchRaw) &&
+    isTestFilePath(targetFile)
+  ) {
+    return true;
+  }
+
+  const command =
+    typeof input.command === "string"
+      ? input.command
+      : typeof input.cmd === "string"
+        ? input.cmd
+        : "";
+  return Boolean(
+    command &&
+      /\brm\b[^\n;&|]*(?:tests?\/|\.test\.|\.spec\.|test_[^\s/]+\.py|_test\.)/i.test(
+        command
+      )
+  );
+}
+
+function detectCiTestRemoval(
+  patchRaw: unknown,
+  targetFile: string | undefined
+): RuleFinding | undefined {
+  if (typeof patchRaw !== "string" || !isCiFilePath(targetFile)) {
+    return undefined;
+  }
+
+  const removed = extractRemovedLines(patchRaw);
+  const added = extractAddedLines(patchRaw);
+  const testCommand =
+    /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b|\b(?:pytest|go\s+test|cargo\s+test|node\s+--test|jest|vitest)\b/i;
+
+  if (!testCommand.test(removed) || testCommand.test(added)) return undefined;
+
+  return {
+    ruleId: "testing/no-cheat",
+    pattern: "CI test step removed",
+    messageSnippet: removed.replace(/\s+/g, " ").slice(0, 220),
+    description:
+      "A CI test command was removed without a replacement test command in the same patch",
+    confidence: "high",
+  };
+}
+
+function snapshotUpdateCommand(command: string): boolean {
+  return (
+    /\b(?:jest|vitest)\b[^\n;&|]*(?:--updateSnapshot|(?:^|\s)-u(?:\s|$))/i.test(
+      command
+    ) ||
+    /\bpytest\b[^\n;&|]*(?:--snapshot-update|--update-snapshots)\b/i.test(
+      command
+    )
+  );
+}
+
 export const noCheatRule: GuardRule = {
   id: "testing/no-cheat",
-  description: "Prevents models from cheating tests by skipping them, focusing only on single tests, or commenting out assertions.",
+  description:
+    "Prevents test bypasses including skips/focus filters, assertion weakening, test deletion, coverage reductions, and CI test removal.",
   inspect: (context: TurnInspectionContext): RuleResult => {
     const findings: RuleFinding[] = [];
+    const blocking: RuleFinding[] = [];
     const seen = new Set<string>();
+    const blockSnapshotUpdates =
+      context.ruleConfig.blockSnapshotUpdates === true;
+    const hasFailedTestEvidence = Boolean(
+      context.evidence?.records.some(
+        (record) => record.kind === "test" && record.status === "failure"
+      )
+    );
+    const blockStructuralTestChanges =
+      context.ruleConfig.blockStructuralTestChanges === true ||
+      hasFailedTestEvidence;
 
-    const checkTestCode = (code: string, filePath?: string) => {
+    const addFinding = (finding: RuleFinding, shouldBlock = true) => {
+      const key = `${finding.pattern}:${finding.messageSnippet}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      findings.push(finding);
+      if (shouldBlock) blocking.push(finding);
+    };
+
+    const checkTestCode = (
+      code: string,
+      filePath?: string,
+      directPatternsBlock = true
+    ) => {
       if (!code || typeof code !== "string") return;
 
       const isTestFile = isTestFilePath(filePath);
       const isTestCode = isTestFile || (!filePath && hasTestContext(code));
 
       for (const pattern of TEST_CHEAT_PATTERNS) {
-        if (seen.has(pattern.name)) continue;
+        pattern.regex.lastIndex = 0;
 
-        // If it's a commented-out assertion, only flag if it's explicitly in a test file or test context
-        if (pattern.name.includes("commented-out assertion") && !isTestCode) {
+        if (
+          pattern.name.includes("commented-out assertion") &&
+          !isTestCode
+        ) {
           continue;
         }
-
-        // For other skip/focus patterns, if filePath is known and NOT a test file, skip unless test markers exist
-        if (filePath && !isTestFile && !hasTestContext(code)) {
-          continue;
-        }
+        if (filePath && !isTestFile && !hasTestContext(code)) continue;
 
         const match = pattern.regex.exec(code);
-        if (match) {
-          seen.add(pattern.name);
-          const snippet = extractSnippet(code, match.index, match[0].length);
-          findings.push({
+        if (!match) continue;
+
+        addFinding(
+          {
             ruleId: "testing/no-cheat",
             pattern: pattern.name,
-            messageSnippet: snippet,
-            description: `Weakened test detected in ${filePath ?? "test file"}: "${match[0]}" → "${snippet}"`,
-          });
-        }
+            messageSnippet: extractSnippet(code, match.index, match[0].length),
+            description: `Weakened test detected in ${filePath ?? "test code"}`,
+            confidence: directPatternsBlock ? "high" : "medium",
+          },
+          directPatternsBlock
+        );
       }
     };
 
@@ -141,33 +347,82 @@ export const noCheatRule: GuardRule = {
       if (msg.info.role !== "assistant") continue;
 
       for (const part of msg.parts) {
-        if (part.type === "tool" && part.state?.input) {
-          const input = part.state.input;
-          const patchRaw = input.patchText ?? input.patch;
-          const targetFile =
-            (input.path as string) ??
-            (input.targetFile as string) ??
-            (input.filePath as string) ??
-            (input.file as string) ??
-            extractFilePathFromPatch(patchRaw);
+        if (part.type !== "tool" || !part.state?.input) continue;
+        const input = part.state.input;
+        const patchRaw = input.patchText ?? input.patch;
+        const targetFile =
+          (input.path as string) ??
+          (input.targetFile as string) ??
+          (input.filePath as string) ??
+          (input.file as string) ??
+          extractFilePathFromPatch(patchRaw);
 
-          if (typeof input.content === "string") {
-            checkTestCode(input.content, targetFile);
-          }
-          if (typeof input.new_string === "string") {
-            checkTestCode(input.new_string, targetFile);
-          }
-          if (typeof input.newString === "string") {
-            checkTestCode(input.newString, targetFile);
-          }
-          const patchText = extractAddedLines(patchRaw);
-          if (patchText) {
-            checkTestCode(patchText, targetFile);
-          }
-          const shellMutation = extractLikelyShellMutation(input);
-          if (shellMutation) {
-            checkTestCode(shellMutation);
-          }
+        if (typeof input.content === "string") {
+          // Whole-file writes may preserve pre-existing skips/ignores. Treat
+          // them as advisory unless failed-test evidence or strict structural
+          // mode makes the intent suspicious.
+          checkTestCode(input.content, targetFile, blockStructuralTestChanges);
+        }
+        if (typeof input.new_string === "string") {
+          checkTestCode(input.new_string, targetFile);
+        }
+        if (typeof input.newString === "string") {
+          checkTestCode(input.newString, targetFile);
+        }
+
+        const patchText = extractAddedLines(patchRaw);
+        if (patchText) checkTestCode(patchText, targetFile);
+
+        if (typeof patchRaw === "string") {
+          const weakening = detectAssertionWeakening(patchRaw, targetFile);
+          if (weakening) addFinding(weakening, blockStructuralTestChanges);
+
+          const coverage = detectCoverageReduction(patchRaw);
+          if (coverage) addFinding(coverage, blockStructuralTestChanges);
+
+          const ciRemoval = detectCiTestRemoval(patchRaw, targetFile);
+          if (ciRemoval) addFinding(ciRemoval, blockStructuralTestChanges);
+        }
+
+        if (detectsTestFileDeletion(input, patchRaw, targetFile)) {
+          addFinding(
+            {
+              ruleId: "testing/no-cheat",
+              pattern: "test file deleted",
+              messageSnippet: targetFile ?? "test file",
+              description:
+                "A test file was deleted; this becomes blocking when paired with failed-test evidence or strict structural-test mode",
+              confidence: hasFailedTestEvidence ? "high" : "medium",
+            },
+            blockStructuralTestChanges
+          );
+        }
+
+        const shellMutation = extractLikelyShellMutation(input);
+        if (shellMutation) {
+          checkTestCode(shellMutation, targetFile, blockStructuralTestChanges);
+        }
+
+        const command =
+          typeof input.command === "string"
+            ? input.command
+            : typeof input.cmd === "string"
+              ? input.cmd
+              : typeof input.script === "string"
+                ? input.script
+                : "";
+        if (command && snapshotUpdateCommand(command)) {
+          addFinding(
+            {
+              ruleId: "testing/no-cheat",
+              pattern: "snapshot update",
+              messageSnippet: command.replace(/\s+/g, " ").slice(0, 220),
+              description:
+                "Snapshots were regenerated; review that the changed behavior is intentional rather than accepting failures blindly",
+              confidence: "medium",
+            },
+            blockSnapshotUpdates
+          );
         }
       }
     }
@@ -180,17 +435,25 @@ export const noCheatRule: GuardRule = {
       };
     }
 
-    const list = findings.map((f) => `  - [${f.pattern}] → ${f.messageSnippet}`).join("\n");
-    const remediationPrompt =
-      `Test integrity violation detected in this turn:\n${list}\n\n` +
-      `Do not bypass failing tests by skipping them (.skip), focusing single tests (.only), or commenting out assertions. ` +
-      `Please fix the underlying code implementation so that all tests pass legitimately.`;
+    if (blocking.length === 0) {
+      return {
+        ruleId: "testing/no-cheat",
+        decision: "pass",
+        findings,
+      };
+    }
+
+    const list = blocking
+      .map((finding) => `  - [${finding.pattern}] → ${finding.messageSnippet}`)
+      .join("\n");
 
     return {
       ruleId: "testing/no-cheat",
       decision: "block",
       findings,
-      remediationPrompt,
+      remediationPrompt:
+        `Test integrity violation detected in this turn:\n${list}\n\n` +
+        `Do not make tests pass by disabling coverage, deleting tests, weakening assertions, removing CI verification, or focusing/skipping failing cases. Fix the underlying implementation or explicitly justify a legitimate test change with matching behavior evidence.`,
     };
   },
 };

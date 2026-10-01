@@ -6,6 +6,7 @@ export declare function extractCurrentTurn(messages: SessionMessage[]): {
     isSubagent: boolean;
     isRemediationResponse: boolean;
     currentTurn: SessionMessage[];
+    turnKey: string;
 };
 export interface EngineExecutionResult {
     decision: "pass" | "block";
@@ -16,6 +17,7 @@ export declare class GuardEngine {
     private config;
     private rules;
     private inspectedMessages;
+    private sessionState;
     constructor(config?: GuardConfig);
     registerRule(rule: GuardRule): void;
     forgetSession(sessionID: string): void;
