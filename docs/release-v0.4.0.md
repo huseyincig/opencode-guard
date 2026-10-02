@@ -1,6 +1,6 @@
-# v0.4.0 release preparation
+# v0.4.0 release status
 
-This is a **source and documentation release candidate**, not a statement that v0.4.0 has already been tagged, published to npm, or released on GitHub. The repository maintainer controls those steps.
+**GitHub tag:** [v0.4.0](https://github.com/huseyincig/opencode-guardian/tree/v0.4.0) points to [`cafb5cf`](https://github.com/huseyincig/opencode-guardian/commit/cafb5cf41b9adbeba4233ef3361d32ff3bb02b42). **CI:** [successful](https://github.com/huseyincig/opencode-guardian/actions/runs/36923665512). npm publication and a GitHub Release have **not been verified in this document**. Documentation fixes committed to `main` after the tag do not change the existing tagged source or an already packed artifact.
 
 ## Included capabilities
 
@@ -19,13 +19,10 @@ An earlier **OpenCode V1 1.18.34** live sandbox run was reported against v0.3.0-
 
 The ordinary `safety/destructive-operations` rule defaults to `warn` and runs **after** tool execution. Opt-in strict preflight only applies to supported shell tool names and inspected command shapes, and it rejects recognized destructive calls even when the user requested them. Keep host permissions, confirmation and filesystem isolation in place.
 
-## Maintainer publication checklist
+## Publication and validation
 
-1. Confirm `package.json` and `package-lock.json` both declare `0.4.0` and review the version commit on `main`.
-2. Confirm the **v0.4.0 version commit's** CI completed successfully on Node 22 and Node 24, including sandbox and npm audit checks.
-3. Run `npm pack --dry-run` and inspect the package contents. The npm package includes compiled `dist/`, entrypoints, README, LICENSE, and the `docs/` directory. Source and test evidence links in those documents point to this GitHub repository.
-4. Create and push the `v0.4.0` tag pointing to the verified version commit, using authorized GitHub credentials. Do not retarget existing version tags.
-5. Perform desired live V1 revalidation and the separate V2 host tests before claiming host-level compatibility.
-6. **The maintainer alone** decides whether and when to run `npm publish` and create a GitHub Release. Update the published installation instructions or release notes if the publication outcome differs from this source candidate.
+- **Completed for the tagged commit:** package version `0.4.0`, Node 22/24 CI, sandbox checks, npm audit and npm package dry run (62 files at preparation time), and the `v0.4.0` tag.
+- **Still to validate:** the exact v0.4.0 package on a live V1 host and the adapter on a separate real V2 host before claiming production compatibility.
+- **Maintainer-controlled:** npm publication and GitHub Release, if desired. Do not retarget `v0.4.0` to include later documentation fixes; use a separate documented update or new version when publishing a changed artifact.
 
 Related documentation: [README](../README.md), [V1/V2 task design](task-contract-v1-v2.md), [security benchmark](security-benchmark.md), and [OWASP coverage map](owasp-agentic-top10-2026.md).

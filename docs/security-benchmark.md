@@ -1,18 +1,17 @@
 # Synthetic security benchmark
 
-Snapshot: 2026-10-01; see [the executable cases](../tests/security-benchmark.test.mjs).
+The frozen test set is defined in [the benchmark tests](https://github.com/huseyincig/opencode-guardian/blob/main/tests/security-benchmark.test.mjs).
 
-The independent [gap regression suite](../tests/security-gap-regression.test.mjs) covers selected active backtick substitutions, plain file removal and inert shell examples; [security audit regressions](../tests/security-audit-regression.test.mjs) cover deletion questions versus explicit authorization and strict V2 setup failures. These additional tests do **not** change the frozen 17-case benchmark counts below.
+Separate [shell-gap regressions](https://github.com/huseyincig/opencode-guardian/blob/main/tests/security-gap-regression.test.mjs) cover backticks, plain `rm` and inert examples. [Audit regressions](https://github.com/huseyincig/opencode-guardian/blob/main/tests/security-audit-regression.test.mjs) cover questions versus consent and strict V2 setup errors. These are outside the 17-case benchmark.
 
-This frozen, non-executing corpus measures the behavior of `evaluatePreflight` on **17 synthetic examples**, not exploit success in a real OpenCode installation. No shell commands in this corpus are run, no filesystem targets are modified, and no external benchmark dataset is claimed.
+The **17 non-executing synthetic cases** exercise `evaluatePreflight`. They do not execute the supplied shell commands, modify filesystem targets or measure successful attacks on a real OpenCode host.
 
 | Defined label | Cases | Observed decision |
 | --- | ---: | --- |
 | Reject (destructive, opaque or uninspectable input) | 10 | 10 rejected as labeled |
 | Allow (ordinary/read-only or non-shell use) | 7 | 7 allowed as labeled |
-| False allowances in this set | — | 0 |
-| False rejections in this set | — | 0 |
+| Incorrect decisions in this 17-case set | — | 0 |
 
-The test also verifies that evaluation does not mutate the supplied tool input and that supported destructive/opaque cases agree with post-turn classification. V1 and V2 hook adapter regression tests live in [preflight.test.mjs](../tests/preflight.test.mjs) and [international-adapters.test.mjs](../tests/international-adapters.test.mjs). The separate [18-case sandbox](../sandbox/comprehensive-test.mjs) is an isolated mock-host test, not production OpenCode.
+All 17 cases matched their predefined labels. This result does **not** imply a zero false-positive or false-negative rate outside the curated set. The tests also verify that evaluation preserves input and that selected cases agree with post-turn classification. Adapter tests are in [preflight.test.mjs](https://github.com/huseyincig/opencode-guardian/blob/main/tests/preflight.test.mjs); the separate [18-scenario sandbox](https://github.com/huseyincig/opencode-guardian/blob/main/sandbox/comprehensive-test.mjs) uses isolated mock hosts.
 
-**Verification boundary for v0.4.0:** a previous live OpenCode V1 1.18.34 test used v0.3.0-era code, not this exact release candidate. v0.4.0's current adapter behavior is covered by unit/mock-host tests and the isolated sandbox; the exact v0.4.0 package has not yet been revalidated on a live V1 installation. A real V2 host has not been tested. Host permissions, competing plugins, dynamic shell expressions, arbitrary interpreters, renamed tools, real-world prompt injection, and external benchmark results also remain unverified. Do not infer these from the synthetic matrix. Optional preflight remains disabled by default.
+The benchmark excludes live host permissions, arbitrary interpreters, dynamic shell expressions and custom shell-tool names. Strict preflight is disabled by default. For real-host verification status, see [release status](release-v0.4.0.md), and for previous V1 latency measurements see [performance benchmark](performance-benchmark.md).

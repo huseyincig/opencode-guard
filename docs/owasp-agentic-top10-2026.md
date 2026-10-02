@@ -1,6 +1,6 @@
 # OWASP Agentic Top 10 (2026): Guardian coverage and limits
 
-Source snapshot: **v0.4.0 release candidate**, 2026-10-01. This is a **capability and gap map**, not an OWASP certification, compliance attestation, threat-model substitute, or claim of complete mitigation. The source version does not imply npm publication.
+Coverage mapped against the **v0.4.0** source. This is a feature-and-gap map, not an OWASP certification.
 
 Sources: [OWASP Agentic Top 10 (December 2025)](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) and the [OWASP release explanation](https://genai.owasp.org/2025/12/09/owasp-top-10-for-agentic-applications-the-benchmark-for-agentic-security-in-the-age-of-autonomous-ai/).
 
@@ -21,18 +21,18 @@ Sources: [OWASP Agentic Top 10 (December 2025)](https://genai.owasp.org/resource
 
 ## Evidence and reproducible checks
 
-- [src/preflight.ts](../src/preflight.ts), [src/index.ts](../src/index.ts), [tests/preflight.test.mjs](../tests/preflight.test.mjs), and [tests/security-audit-regression.test.mjs](../tests/security-audit-regression.test.mjs): opt-in V1/V2 shell pre-execution checks, strict V2 setup error handling, and mock-host behavior.
-- [src/rules/destructive-operations.ts](../src/rules/destructive-operations.ts), [tests/owasp-scope-regression.test.mjs](../tests/owasp-scope-regression.test.mjs), [tests/guardfall-regression.test.mjs](../tests/guardfall-regression.test.mjs), and [tests/security-gap-regression.test.mjs](../tests/security-gap-regression.test.mjs): post-turn authorization findings, literal path scoping, and selected shell-pattern regression cases.
-- [src/task-contract.ts](../src/task-contract.ts) and [tests/report-followup-regression.test.mjs](../tests/report-followup-regression.test.mjs): task extraction and limits on what counts as review evidence.
-- [src/rules/no-ghost-deps.ts](../src/rules/no-ghost-deps.ts) and [src/rules/no-secrets.ts](../src/rules/no-secrets.ts): narrow dependency and hardcoded-secret checks; neither performs supply-chain or identity verification.
-- [src/rules/circuit-breaker.ts](../src/rules/circuit-breaker.ts), [src/rules/no-unverified-claims.ts](../src/rules/no-unverified-claims.ts), and [src/rules/task-completion.ts](../src/rules/task-completion.ts): bounded retries, selected claim checks, and task completion logic.
+- [src/preflight.ts](https://github.com/huseyincig/opencode-guardian/blob/main/src/preflight.ts), [src/index.ts](https://github.com/huseyincig/opencode-guardian/blob/main/src/index.ts), [tests/preflight.test.mjs](https://github.com/huseyincig/opencode-guardian/blob/main/tests/preflight.test.mjs), and [tests/security-audit-regression.test.mjs](https://github.com/huseyincig/opencode-guardian/blob/main/tests/security-audit-regression.test.mjs): opt-in V1/V2 shell pre-execution checks, strict V2 setup error handling, and mock-host behavior.
+- [src/rules/destructive-operations.ts](https://github.com/huseyincig/opencode-guardian/blob/main/src/rules/destructive-operations.ts), [tests/owasp-scope-regression.test.mjs](https://github.com/huseyincig/opencode-guardian/blob/main/tests/owasp-scope-regression.test.mjs), [tests/guardfall-regression.test.mjs](https://github.com/huseyincig/opencode-guardian/blob/main/tests/guardfall-regression.test.mjs), and [tests/security-gap-regression.test.mjs](https://github.com/huseyincig/opencode-guardian/blob/main/tests/security-gap-regression.test.mjs): post-turn authorization findings, literal path scoping, and selected shell-pattern regression cases.
+- [src/task-contract.ts](https://github.com/huseyincig/opencode-guardian/blob/main/src/task-contract.ts) and [tests/report-followup-regression.test.mjs](https://github.com/huseyincig/opencode-guardian/blob/main/tests/report-followup-regression.test.mjs): task extraction and limits on what counts as review evidence.
+- [src/rules/no-ghost-deps.ts](https://github.com/huseyincig/opencode-guardian/blob/main/src/rules/no-ghost-deps.ts) and [src/rules/no-secrets.ts](https://github.com/huseyincig/opencode-guardian/blob/main/src/rules/no-secrets.ts): narrow dependency and hardcoded-secret checks; neither performs supply-chain or identity verification.
+- [src/rules/circuit-breaker.ts](https://github.com/huseyincig/opencode-guardian/blob/main/src/rules/circuit-breaker.ts), [src/rules/no-unverified-claims.ts](https://github.com/huseyincig/opencode-guardian/blob/main/src/rules/no-unverified-claims.ts), and [src/rules/task-completion.ts](https://github.com/huseyincig/opencode-guardian/blob/main/src/rules/task-completion.ts): bounded retries, selected claim checks, and task completion logic.
 
-The v0.4.0 source has unit/mock-host and isolated sandbox coverage; the earlier live OpenCode V1 1.18.34 run used v0.3.0-era code. Live V1 revalidation of this package and any real V2 host integration are still outstanding. These checks do not establish complete risk coverage or prove production behavior for every OpenCode build.
+For unit/sandbox coverage, earlier V1 host testing and pending v0.4.0/V2 host validation, see [release status](release-v0.4.0.md).
 
 ## Deployment controls outside this plugin
 
 Use OpenCode host permissions and human confirmation for sensitive tools; restrict filesystem/network/credential access at the operating-system or container layer; grant agents only scoped credentials; vet and pin dependencies and MCP integrations; and review high-impact actions independently. Enabling Guardian preflight does not replace any of these controls.
 
-## Maintenance rule
+## Maintenance
 
-Update this map only when a code path, configuration, and reproducible test support a change in scope. Do not convert a matching OWASP category into a blanket covered/compliant claim.
+Update a capability claim only when supported by code and reproducible tests.

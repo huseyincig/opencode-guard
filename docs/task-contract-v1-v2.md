@@ -1,18 +1,17 @@
 # Task contract and OpenCode V1/V2 adapter design
 
-This describes the implemented task controls and V1/V2 adapters in the **v0.4.0 source tree**. Preparing the repository does not imply that v0.4.0 is already published to npm or that a GitHub release exists. The maintainer controls publication.
+This document describes the implemented task controls and OpenCode adapters. For the tagged version, publication and live-host verification status, see [release status](release-v0.4.0.md).
 
-## Primary, dated sources
+## Host API references
 
 - OpenCode V1 [plugin documentation](https://opencode.ai/docs/plugins/): `chat.message`, `experimental.chat.system.transform`, `tool.execute.before`, `event` (`session.idle`).
 - OpenCode V2 [plugin overview](https://opencode.ai/v2/docs/build/plugins): `ctx.session.hook("prompt")`, `ctx.session.hook("context")`, `ctx.event.subscribe`, `ctx.session.context`, `ctx.session.synthetic`.
 - OpenCode's [V1-to-V2 migration documentation](https://opencode.ai/v2/docs/build/plugins/migrate-v1/): hook boundaries are **not** interchangeable; `ctx.location` refers to where the plugin loaded, not to every session's current location.
-- Actual installed TypeScript declarations verified against `@opencode-ai/plugin` **1.18.34** and `@opencode/plugin` **2.0.21**, including `SessionPrompt`, `SessionContext`, `ToolHooks`, and `SystemPart`.
-- [OpenCode issue #44788](https://github.com/anomalyco/opencode/issues/44788) describes a **reported beta-host failure** to deliver events/context/synthetic prompts. Its existence does not establish that all V2 builds fail, but plugin capability detection alone cannot prove runtime delivery.
+- Adapter typing was checked against `@opencode-ai/plugin` **1.18.34** and `@opencode/plugin` **2.0.21**. Runtime hook delivery must still be checked on the target host.
 
-For the separately implemented 11-language signal packs, the exact first-line directive, the pure task policy, and source-verified shell/OPA tradeoffs, see [international policy design](international-policy.md).
+See [international task policy](international-policy.md) for locale support and the optional typed directive.
 
-## Lifecycle and actual integration
+## Adapter lifecycle
 
 | Operation | V1 (`@opencode-ai/plugin`) | V2 (`@opencode/plugin`) |
 | --- | --- | --- |
@@ -24,7 +23,7 @@ For the separately implemented 11-language signal packs, the exact first-line di
 | Resolve session directory | V1 plugin's known project directory | Prefer `ctx.session.get({sessionID}).location.directory`; fall back to `ctx.location.directory` |
 | Unload | V1 hook lifecycle | Abort the event stream and dispose registered hook handles |
 
-OpenCode V2 partial or transition contexts are ignored if required event/session capabilities are absent **only when strict preflight is off**. When `preflight.enabled` is true and the plugin is enabled, incomplete host context, invalid/unavailable event subscription or missing/invalid tool hook registration triggers an explicit setup error instead of silently disabling protection. Optional task hooks may fail independently without disabling an otherwise available idle path. A successful registration does **not** guarantee actual event delivery.
+OpenCode V2 partial or transition contexts are ignored if required event/session capabilities are absent **only when strict preflight is off**. When `preflight.enabled` is true and the plugin is enabled, incomplete host context, invalid/unavailable event subscription or missing/invalid tool hook registration triggers an explicit setup error instead of silently disabling protection. Optional task hooks may fail independently without disabling an otherwise available idle path. Hook registration does not verify actual event delivery; check the target V2 host.
 
 ## Contract and state algorithm
 
@@ -39,15 +38,15 @@ OpenCode V2 partial or transition contexts are ignored if required event/session
 ## Confidence, limitations and safety
 
 - The contract is a conservative **deterministic extractor**, not a universal natural-language interpreter. Ambiguous or unsupported instructions are not silently invented. When needed, use a more explicit user prompt.
-- Post-change source inspection recognizes successful, nonempty `read_file` / `view_file` / `file.read` results and substantive source-bearing search/diff results. File-name-only `glob`/`find`/`file_search` output and `git diff --stat` do not prove inspection. A single successful read is observable post-change inspection, **not proof that an entire repository was comprehensively audited**. The agent's claim of a completely clean codebase is never mathematically guaranteed by this plugin.
+- Post-change source inspection uses successful file reads and substantive source-bearing search/diff results. File-name listings and diff statistics do not qualify. A read documents observed inspection, not exhaustive repository coverage.
 - The normal Guardian destructive-operation rule runs **after** a tool completes, at default `warn` severity. It checks recognized destructive forms and plain `rm` target authorization; merely asking about deletion does not grant permission. The optional **strict preflight** (`preflight.enabled: true`, disabled by default) uses V1 `tool.execute.before` or V2 `ctx.tool.hook("execute.before")` to reject selected risky calls before execution, regardless of user consent. It is not a complete shell parser, permission system, or host sandbox.
-- V1's system transformation is an experimental hook. V2 `prompt` and `context` are different boundaries; a hook registration can succeed while affected beta versions still fail to deliver runtime events. Confirm on the actual intended host before release.
+- V1's system transformation is experimental. V2 `prompt` and `context` have different boundaries; verify delivery on the actual host.
 - Synthetic continuation is bounded rather than unconditionally repeating until the model says the task is complete. This prevents a plugin-induced infinite loop; the user may request additional iterations when the budget is exhausted.
 - Existing conversation-style rules retain their configurable severities. To prioritize task completion without blocking on stylistic phrases, set `discipline/no-apology`, `discipline/no-evasion`, or `quality/no-shortcuts` to `warn` explicitly.
 
-## Further development, intentionally not claimed as implemented
+## Potential extensions
 
 - Rich, user-confirmed structured task scopes for complex multi-part requirements; the current optional first-line directive supports a small typed contract, not a full per-file scope manifest.
 - Richer per-file coverage and before/after diff evidence for a genuinely verifiable complete audit.
 - Expand the already implemented, opt-in pre-tool checks beyond recognized shell tool names and command fields, with explicit host capability tests, narrowly scoped authorization where appropriate, and careful false-positive controls.
-- Repeat live integration tests on the exact **v0.4.0** package with OpenCode V1 and test the V2 adapter on a separate real V2 host, including event loss, preflight rejection and session interruption. The earlier live V1 run used an earlier code revision; V2 is currently mock-tested only.
+- Revalidate the exact v0.4.0 package on a live V1 host and test the V2 adapter on a separate real V2 host, including lost events, preflight rejection and session interruption.
