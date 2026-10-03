@@ -28,33 +28,43 @@ export type GuardianStatus = {
   lastEvent?: string;
 };
 
-export function guardianStateDirectory(): string {
+export function guardianStateDirectory(directory?: string): string {
   if (process.env.OPENCODE_GUARDIAN_STATE_DIR) return process.env.OPENCODE_GUARDIAN_STATE_DIR;
+  if (directory && typeof directory === "string" && directory.trim().length > 0) {
+    return path.join(directory, ".opencode");
+  }
   // Node's built-in test runner sets this only in test workers. Keep synthetic
   // checks from polluting the actual user's live intervention statistics.
   if (process.env.NODE_TEST_CONTEXT) return path.join(os.tmpdir(), `opencode-guardian-tests-${process.pid}`);
   return path.join(os.homedir(), ".local", "state", "opencode-guardian");
 }
-export function guardianEventPath(): string {
-  return path.join(guardianStateDirectory(), "events.jsonl");
+export function guardianEventPath(directory?: string): string {
+  const dir = guardianStateDirectory(directory);
+  if (fs.existsSync(path.join(dir, "events.jsonl")) && !fs.existsSync(path.join(dir, "guardian-events.jsonl"))) {
+    return path.join(dir, "events.jsonl");
+  }
+  return path.join(dir, "guardian-events.jsonl");
 }
 export function sessionFingerprint(value?: string): string | undefined {
   return value ? createHash("sha256").update(value).digest("hex").slice(0, 16) : undefined;
 }
 let reportedWriteFailure = false;
-export function recordGuardianEvent(event: Omit<GuardianEvent, "at">): void {
+export function recordGuardianEvent(event: Omit<GuardianEvent, "at">, directoryArg?: string): void {
   try {
-    const dir = guardianStateDirectory();
+    const dir = guardianStateDirectory(directoryArg);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const directory = fs.lstatSync(dir);
+    const stat = fs.lstatSync(dir);
     // A pre-existing shared directory or a symlink must not expose the log.
-    if (!directory.isDirectory() || (process.platform !== "win32" &&
-        ((directory.mode & 0o077) !== 0 ||
-        (typeof process.getuid === "function" && directory.uid !== process.getuid())))) {
+    // When writing to a project directory (.opencode), standard project umask permissions apply.
+    // Strict 0700 private mode is enforced for global user directories or when explicitly configured.
+    const isProjectDirectory = Boolean(directoryArg && !process.env.OPENCODE_GUARDIAN_STATE_DIR);
+    if (!stat.isDirectory() || (process.platform !== "win32" &&
+        ((!isProjectDirectory && (stat.mode & 0o077) !== 0) ||
+        (typeof process.getuid === "function" && stat.uid !== process.getuid())))) {
       throw new Error("Guardian state directory is not private to the current user");
     }
     const fd = fs.openSync(
-      guardianEventPath(),
+      guardianEventPath(directoryArg),
       fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | (fs.constants.O_NOFOLLOW ?? 0),
       0o600
     );
@@ -87,14 +97,24 @@ export function recordGuardianEvent(event: Omit<GuardianEvent, "at">): void {
 }
 
 /** Reads at most the newest 2 MiB: counters describe this bounded event window. */
-export function readGuardianStatus(maxBytes = 2 * 1024 * 1024): GuardianStatus {
+export function readGuardianStatus(
+  directoryOrMaxBytes?: string | number,
+  maxBytesArg = 2 * 1024 * 1024
+): GuardianStatus {
+  let directory: string | undefined;
+  let maxBytes = maxBytesArg;
+  if (typeof directoryOrMaxBytes === "number") {
+    maxBytes = directoryOrMaxBytes;
+  } else if (typeof directoryOrMaxBytes === "string") {
+    directory = directoryOrMaxBytes;
+  }
   const result: GuardianStatus = {
     preflight: "unknown", inspected: 0, blocked: 0, warnings: 0,
     remediations: 0, errors: 0, truncated: false,
   };
   let fd: number | undefined;
   try {
-    fd = fs.openSync(guardianEventPath(), "r");
+    fd = fs.openSync(guardianEventPath(directory), "r");
     const size = fs.fstatSync(fd).size;
     const start = Math.max(0, size - maxBytes);
     const buffer = Buffer.alloc(size - start);

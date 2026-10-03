@@ -32,6 +32,7 @@ export * from "./rules/instruction-fidelity.js";
 export * from "./prose.js";
 export * from "./preflight.js";
 export * from "./telemetry.js";
+export * from "./version-notice.js";
 
 function stringifyV2ToolContent(content: unknown): string {
   if (!Array.isArray(content)) return "";
@@ -171,21 +172,21 @@ async function handleSessionIdle(
     const result = await engine.inspect(sessionID, directory, messages);
     const findings = result.results.filter((item) => item.findings.length > 0);
     if (findings.length && !(result.decision === "block" && result.combinedRemediationPrompt)) {
-      recordGuardianEvent({ kind: "post-warning", session: sessionFingerprint(sessionID), rules: findings.map((item) => item.ruleId) });
+      recordGuardianEvent({ kind: "post-warning", session: sessionFingerprint(sessionID), rules: findings.map((item) => item.ruleId) }, directory);
     }
 
     if (result.decision === "block" && result.combinedRemediationPrompt) {
       await sendPrompt(result.combinedRemediationPrompt);
-      recordGuardianEvent({ kind: "post-remediation", session: sessionFingerprint(sessionID), rules: findings.map((item) => item.ruleId) });
+      recordGuardianEvent({ kind: "post-remediation", session: sessionFingerprint(sessionID), rules: findings.map((item) => item.ruleId) }, directory);
     }
   } catch (error) {
-    recordGuardianEvent({ kind: "inspection-error", session: sessionFingerprint(sessionID) });
+    recordGuardianEvent({ kind: "inspection-error", session: sessionFingerprint(sessionID) }, directory);
     console.error("[opencode-guardian] Inspection error:", error);
   }
 }
 
 /** Records only recognized shell calls and a rule code, never raw commands. */
-function inspectPreflight(tool: string, args: unknown, sessionID?: string): void {
+function inspectPreflight(tool: string, args: unknown, sessionID?: string, directory?: string): void {
   if (!isShellExecutionTool(tool)) return;
   const finding = evaluatePreflight(tool, args);
   recordGuardianEvent({
@@ -193,14 +194,14 @@ function inspectPreflight(tool: string, args: unknown, sessionID?: string): void
     session: sessionFingerprint(sessionID),
     tool: tool.toLowerCase().split(/[.:/]/).at(-1),
     ...(finding ? { rules: [finding] } : {}),
-  });
+  }, directory);
   if (finding) throw new GuardianPreflightError(finding);
 }
 
 const server: OpenCodeV1ServerPlugin = async ({ client, directory }) => {
   const config = loadConfig(directory);
   if (config.enabled === false) {
-    recordGuardianEvent({ kind: "runtime-started", runtime: "v1", preflight: "disabled" });
+    recordGuardianEvent({ kind: "runtime-started", runtime: "v1", preflight: "disabled" }, directory);
     // Preserve the V1 hook shape without inspecting turns or injecting context.
     return {
       "chat.message": async () => {},
@@ -213,13 +214,13 @@ const server: OpenCodeV1ServerPlugin = async ({ client, directory }) => {
   let promptSequence = 0;
   let updateChecked = false;
   const strictPreflight = config.preflight?.enabled === true;
-  recordGuardianEvent({ kind: "runtime-started", runtime: "v1", preflight: strictPreflight ? "active" : "disabled" });
+  recordGuardianEvent({ kind: "runtime-started", runtime: "v1", preflight: strictPreflight ? "active" : "disabled" }, directory);
 
   return {
     ...(strictPreflight ? {
       "tool.execute.before": async (
         input: { tool: string; sessionID?: string }, output: { args: unknown }
-      ) => inspectPreflight(input.tool, output.args, input.sessionID),
+      ) => inspectPreflight(input.tool, output.args, input.sessionID, directory),
     } : {}),
     "chat.message": async (input, output) => {
       const text = output.parts
@@ -312,7 +313,7 @@ const setup: OpenCodeV2.Plugin["setup"] = async (
   const directory = context?.location?.directory ?? process.cwd();
   const config = loadConfig(directory);
   if (config.enabled === false) {
-    recordGuardianEvent({ kind: "runtime-started", runtime: "v2", preflight: "disabled" });
+    recordGuardianEvent({ kind: "runtime-started", runtime: "v2", preflight: "disabled" }, directory);
     return;
   }
   const strictPreflight = config.preflight?.enabled === true;
@@ -367,7 +368,7 @@ const setup: OpenCodeV2.Plugin["setup"] = async (
     }
     try {
       const registration = await context.tool.hook("execute.before", (event) => {
-        inspectPreflight(event.tool, event.input, event.sessionID);
+        inspectPreflight(event.tool, event.input, event.sessionID, directory);
       });
       if (!registration || typeof registration.dispose !== "function") {
         throw new Error("V2 tool hook did not return a valid registration.");
@@ -483,7 +484,7 @@ const setup: OpenCodeV2.Plugin["setup"] = async (
     }
   };
 
-  recordGuardianEvent({ kind: "runtime-started", runtime: "v2", preflight: strictPreflight ? "active" : "disabled" });
+  recordGuardianEvent({ kind: "runtime-started", runtime: "v2", preflight: strictPreflight ? "active" : "disabled" }, directory);
   void eventLoop();
 
   return async () => {

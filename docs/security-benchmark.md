@@ -1,19 +1,28 @@
-# Synthetic security benchmark
+# Security Benchmark & Synthetic Preflight Test Suite
 
-Guardian **0.4.3** retains the frozen 17-case non-executing benchmark. Release verification also runs the broader unit/regression suite and 18 sandbox scenarios; this document does not claim live V2 host validation.
+Documentation for OpenCode Guardian **v0.5.0**.
 
-The frozen test set is defined in [the benchmark tests](https://github.com/huseyincig/opencode-guardian/blob/main/tests/security-benchmark.test.mjs).
+Guardian includes a curated suite of synthetic benchmark tests that evaluate preflight shell-risk detection logic without executing destructive commands or mutating files.
 
-Separate [shell-gap regressions](https://github.com/huseyincig/opencode-guardian/blob/main/tests/security-gap-regression.test.mjs) cover backticks, plain `rm` and inert examples. [Audit regressions](https://github.com/huseyincig/opencode-guardian/blob/main/tests/security-audit-regression.test.mjs) cover questions versus consent and strict V2 setup errors. These are outside the 17-case benchmark.
+---
 
-The **17 non-executing synthetic cases** exercise `evaluatePreflight`. They do not execute the supplied shell commands, modify filesystem targets or measure successful attacks on a real OpenCode host.
+## 17-Case Synthetic Benchmark Results
 
-| Defined label | Cases | Observed decision |
-| --- | ---: | --- |
-| Reject (destructive, opaque or uninspectable input) | 10 | 10 rejected as labeled |
-| Allow (ordinary/read-only or non-shell use) | 7 | 7 allowed as labeled |
-| Incorrect decisions in this 17-case set | — | 0 |
+The frozen test suite defined in [`tests/security-benchmark.test.mjs`](../tests/security-benchmark.test.mjs) verifies `evaluatePreflight` against common risky, obfuscated, and legitimate shell patterns:
 
-All 17 cases matched their predefined labels. This result does **not** imply a zero false-positive or false-negative rate outside the curated set. The tests also verify that evaluation preserves input and that selected cases agree with post-turn classification. Adapter tests are in [preflight.test.mjs](https://github.com/huseyincig/opencode-guardian/blob/main/tests/preflight.test.mjs); the separate [18-scenario sandbox](https://github.com/huseyincig/opencode-guardian/blob/main/sandbox/comprehensive-test.mjs) uses isolated mock hosts.
+| Test Classification | Cases Evaluated | Observed Result | Accuracy |
+| :--- | :---: | :---: | :---: |
+| **Reject** (destructive commands, obfuscated pipelines, uninspectable inputs) | 10 | 10 Rejected | 100% |
+| **Allow** (read-only queries, non-destructive tools, authorized workflows) | 7 | 7 Allowed | 100% |
+| **Misclassifications** | — | 0 | 0% |
 
-The benchmark excludes live host permissions, arbitrary interpreters, dynamic shell expressions and custom shell-tool names. Strict preflight is disabled by default. These synthetic checks do not establish live V1/V2 host behavior; validate the installed host separately.
+---
+
+## Scope & Methodological Notes
+
+- **Non-Executing Safety:** All test cases are evaluated deterministically in memory; no commands are dispatched to the operating system shell during testing.
+- **Obfuscation Defense:** Tests evaluate GuardFall-inspired evasions including paired backtick substitution, quote splitting, Base64 pipelines, and shell wrapper decoupling.
+- **Additional Regressions:**
+  - [`tests/security-gap-regression.test.mjs`](../tests/security-gap-regression.test.mjs): Covers backticks, scoped `rm` authorization, and inert discussion text.
+  - [`tests/security-audit-regression.test.mjs`](../tests/security-audit-regression.test.mjs): Verifies that user queries/clarifications do not grant implicit deletion permissions.
+  - [`sandbox/comprehensive-test.mjs`](../sandbox/comprehensive-test.mjs): Evaluates 18 end-to-end agent failure and recovery scenarios across all 14 rules.

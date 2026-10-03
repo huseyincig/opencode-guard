@@ -127,3 +127,31 @@ test("telemetry refuses a pre-existing publicly traversable state directory", (t
   recordGuardianEvent({ kind: "runtime-started", runtime: "v1", preflight: "active" });
   assert.equal(fs.existsSync(guardianEventPath()), false);
 });
+
+test("telemetry records events in project .opencode directory with 0600 file mode and permits 0755 directory", (t) => {
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-project-test-"));
+  t.after(() => fs.rmSync(projectDir, { recursive: true, force: true }));
+
+  const orig = process.env.OPENCODE_GUARDIAN_STATE_DIR;
+  delete process.env.OPENCODE_GUARDIAN_STATE_DIR;
+  t.after(() => {
+    if (orig !== undefined) process.env.OPENCODE_GUARDIAN_STATE_DIR = orig;
+  });
+
+  recordGuardianEvent({ kind: "runtime-started", runtime: "v2", preflight: "active" }, projectDir);
+  recordGuardianEvent({ kind: "preflight-allowed", tool: "bash" }, projectDir);
+  recordGuardianEvent({ kind: "post-warning", rules: ["test-rule"] }, projectDir);
+
+  const eventFile = guardianEventPath(projectDir);
+  assert.equal(eventFile, path.join(projectDir, ".opencode", "guardian-events.jsonl"));
+  assert.equal(fs.existsSync(eventFile), true);
+  if (process.platform !== "win32") {
+    assert.equal(fs.statSync(eventFile).mode & 0o777, 0o600);
+  }
+
+  const status = readGuardianStatus(projectDir);
+  assert.equal(status.preflight, "active");
+  assert.equal(status.inspected, 1);
+  assert.equal(status.warnings, 1);
+});
+

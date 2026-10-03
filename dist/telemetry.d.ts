@@ -19,9 +19,9 @@ export type GuardianStatus = {
     truncated: boolean;
     lastEvent?: string;
 };
-export declare function guardianStateDirectory(): string;
-export declare function guardianEventPath(): string;
+export declare function guardianStateDirectory(directory?: string): string;
+export declare function guardianEventPath(directory?: string): string;
 export declare function sessionFingerprint(value?: string): string | undefined;
-export declare function recordGuardianEvent(event: Omit<GuardianEvent, "at">): void;
+export declare function recordGuardianEvent(event: Omit<GuardianEvent, "at">, directoryArg?: string): void;
 /** Reads at most the newest 2 MiB: counters describe this bounded event window. */
-export declare function readGuardianStatus(maxBytes?: number): GuardianStatus;
+export declare function readGuardianStatus(directoryOrMaxBytes?: string | number, maxBytesArg?: number): GuardianStatus;

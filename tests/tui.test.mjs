@@ -105,8 +105,11 @@ test("Guardian sidebar is compact by default and contains expandable details", a
   assert.match(source, /<Show when=\{open\(\)\}>/);
   assert.match(source, /guardianVersion/);
   assert.match(source, /status\(\)\.warnings/);
-  assert.match(source, /Preflight \(last start\)/);
+  assert.match(source, /label="Preflight"/);
+  assert.match(source, /StatRow/);
+  assert.match(source, /\(↑\)/);
   assert.match(runtime, /opentui:runtime-module:solid-js/);
   assert.match(runtime, /onMouseDown/);
+  assert.match(runtime, /\(↑\)/);
   assert.doesNotMatch(runtime, /@opentui\/solid\/jsx-runtime/);
 });
