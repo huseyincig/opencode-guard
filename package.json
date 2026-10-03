@@ -27,6 +27,7 @@
     "LICENSE",
     "index.js",
     "server.js",
+    "tui.js",
     "scripts/guardian-status.mjs"
   ],
   "scripts": {
