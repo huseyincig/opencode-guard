@@ -91,3 +91,22 @@ test("TUI build uses Solid Universal and shares the OpenCode host runtime", asyn
   assert.equal(typeof TuiPlugin.tui, "function");
   assert.equal(typeof TuiPlugin.setup, "function");
 });
+
+
+test("Guardian sidebar is compact by default and contains expandable details", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const root = path.resolve(import.meta.dirname, "..");
+  const source = fs.readFileSync(path.join(root, "src/tui.tsx"), "utf8");
+  const runtime = fs.readFileSync(path.join(root, "dist/tui-runtime.js"), "utf8");
+  assert.match(source, /createSignal\(false\)/);
+  assert.match(source, /onMouseDown=\{\(\) => setOpen/);
+  assert.match(source, /<Show when=\{!open\(\)\}>/);
+  assert.match(source, /<Show when=\{open\(\)\}>/);
+  assert.match(source, /guardianVersion/);
+  assert.match(source, /status\(\)\.warnings/);
+  assert.match(source, /Preflight \(last start\)/);
+  assert.match(runtime, /opentui:runtime-module:solid-js/);
+  assert.match(runtime, /onMouseDown/);
+  assert.doesNotMatch(runtime, /@opentui\/solid\/jsx-runtime/);
+});
