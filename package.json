@@ -23,6 +23,7 @@
     "dist",
     "docs",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "index.js",
     "server.js",

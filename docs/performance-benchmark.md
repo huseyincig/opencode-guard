@@ -27,4 +27,4 @@ The isolated values describe the benchmarked operations and input set, not guara
 
 The earlier V1 host run also exercised the plugin with preflight both on and off. It did not validate the subsequent v0.4.0 changes on a real V1 host. The v0.4.0 source has automated tests and isolated sandbox scenarios; **real V2 host integration and V2 latency remain unmeasured**.
 
-For reproducible automated checks, see [security benchmark](security-benchmark.md), [adapter design](task-contract-v1-v2.md), and [release status](release-v0.4.0.md).
+For reproducible automated checks, see [security benchmark](security-benchmark.md), [adapter design](task-contract-v1-v2.md), and the [changelog](../CHANGELOG.md).

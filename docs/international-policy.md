@@ -23,7 +23,7 @@ Supported fields are `mode` (`iterative-review` or `one-pass`), `review` (`sourc
 
 Guardian's destructive-operation rule reviews completed tool activity at default `warn` severity. Selected `rm` operations require explicit, target-matching authorization; questions and explanation requests are not consent. Optional strict preflight (`preflight.enabled: true`) rejects recognized risky calls through supported shell hooks **before** execution, including recognized destructive commands even when explicitly requested. It is disabled by default and does not intercept every tool or parse arbitrary shell syntax.
 
-The V1 adapter was tested on a real OpenCode V1 1.18.34 host with an earlier code revision. Current changes have automated and mock-host coverage; a real V2 installation has not yet been validated. See [V1/V2 adapter design](task-contract-v1-v2.md), [release status](release-v0.4.0.md) and [V1 performance results](performance-benchmark.md).
+The V1 adapter was tested on a real OpenCode V1 1.18.34 host with an earlier code revision. Current changes have automated and mock-host coverage; a real V2 installation has not yet been validated. See [V1/V2 adapter design](task-contract-v1-v2.md), [changelog](../CHANGELOG.md) and [V1 performance results](performance-benchmark.md).
 
 ## References and future options
 
@@ -31,4 +31,4 @@ The V1 adapter was tested on a real OpenCode V1 1.18.34 host with an earlier cod
 - Erik Meijer's [*Guardians of the Agents*](https://doi.org/10.1145/3777544), published in *Communications of the ACM* in December 2025, discusses checking defined properties before an agent executes tools when its host supports interception.
 - [tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash) and [OPA/Rego](https://www.openpolicyagent.org/docs/policy-language) are possible future options for structured shell parsing and policy-as-code. Neither is currently a Guardian dependency.
 
-Planned work may include wider shell-tool coverage, richer per-file review evidence, and separately validated optional parsing or policy adapters. These are **not implemented** in v0.4.0.
+Planned work may include wider shell-tool coverage, richer per-file review evidence, and separately validated optional parsing or policy adapters. These are **not implemented** in the current source.

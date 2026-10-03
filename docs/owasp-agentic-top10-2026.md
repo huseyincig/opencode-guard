@@ -27,7 +27,7 @@ Sources: [OWASP Agentic Top 10 (December 2025)](https://genai.owasp.org/resource
 - [src/rules/no-ghost-deps.ts](https://github.com/huseyincig/opencode-guardian/blob/main/src/rules/no-ghost-deps.ts) and [src/rules/no-secrets.ts](https://github.com/huseyincig/opencode-guardian/blob/main/src/rules/no-secrets.ts): narrow dependency and hardcoded-secret checks; neither performs supply-chain or identity verification.
 - [src/rules/circuit-breaker.ts](https://github.com/huseyincig/opencode-guardian/blob/main/src/rules/circuit-breaker.ts), [src/rules/no-unverified-claims.ts](https://github.com/huseyincig/opencode-guardian/blob/main/src/rules/no-unverified-claims.ts), and [src/rules/task-completion.ts](https://github.com/huseyincig/opencode-guardian/blob/main/src/rules/task-completion.ts): bounded retries, selected claim checks, and task completion logic.
 
-For unit/sandbox coverage, earlier V1 host testing and pending v0.4.0/V2 host validation, see [release status](release-v0.4.0.md).
+For unit/sandbox coverage, earlier V1 host testing and pending live validation of the current source, see the [changelog](../CHANGELOG.md).
 
 ## Deployment controls outside this plugin
 

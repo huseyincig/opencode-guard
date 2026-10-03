@@ -1,6 +1,6 @@
 # Task contract and OpenCode V1/V2 adapter design
 
-This document describes the implemented task controls and OpenCode adapters. For the tagged version, publication and live-host verification status, see [release status](release-v0.4.0.md).
+This document describes the implemented task controls and OpenCode adapters. For version history, publication and live-host verification status, see the [changelog](../CHANGELOG.md).
 
 ## Host API references
 
@@ -49,4 +49,4 @@ OpenCode V2 partial or transition contexts are ignored if required event/session
 - Rich, user-confirmed structured task scopes for complex multi-part requirements; the current optional first-line directive supports a small typed contract, not a full per-file scope manifest.
 - Richer per-file coverage and before/after diff evidence for a genuinely verifiable complete audit.
 - Expand the already implemented, opt-in pre-tool checks beyond recognized shell tool names and command fields, with explicit host capability tests, narrowly scoped authorization where appropriate, and careful false-positive controls.
-- Revalidate the exact v0.4.0 package on a live V1 host and test the V2 adapter on a separate real V2 host, including lost events, preflight rejection and session interruption.
+- Validate the currently deployed package on a real V1 host and the V2 adapter and sidebar on a real V2 host, including lost events, preflight rejection and session interruption.
