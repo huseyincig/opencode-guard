@@ -13,10 +13,6 @@ Uses OpenCode's supported plugin hooks — **no manual markdown rules or system 
 
 ---
 
-## Version 0.4.3
-
-This release includes the startup notice for newer stable Guardian versions (24-hour cached npm check; no automatic installation), the additive V1 `sidebar_content` and V2 `sidebar.content` sidebar registrations, and official SDK typing for the V1 TUI adapter. Source and compiled TUI entrypoints are included. The server behavior and optional strict preflight remain unchanged. See [release notes](docs/release-0.4.3.md) for verification scope and limitations.
-
 ## Features
 
 **OpenCode Guardian** runs in-process with prebuilt TypeScript and provides:
