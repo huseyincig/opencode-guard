@@ -1,5 +1,5 @@
 /** Dedicated TUI entrypoint: OpenCode 1 (tui / sidebar_content) and 2 (setup / sidebar.content). */
-import { Plugin } from "@opencode/plugin/tui";
+import type { Plugin } from "@opencode/plugin/tui";
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui";
 import { createSignal, onCleanup } from "solid-js";
 import { readGuardianStatus } from "./telemetry.js";
@@ -21,7 +21,7 @@ function GuardianSidebar() {
   );
 }
 
-const v2Plugin = Plugin.define({
+const v2Plugin: Plugin.Definition = {
   id: "opencode-guardian.tui",
   setup(context) {
     const config = loadConfig(context.location?.directory ?? process.cwd());
@@ -36,8 +36,7 @@ const v2Plugin = Plugin.define({
       render: () => <GuardianSidebar />,
     });
   },
-});
-
+};
 
 /** Use V1's actual SDK contract; V1 slot IDs are host-managed, not disposers. */
 const v1Tui: TuiPlugin = async (api: TuiPluginApi) => {

@@ -71,3 +71,23 @@ test("V1 TUI honors the same disabled Guardian configuration", async (t) => {
   });
   assert.equal(called, false);
 });
+
+
+test("TUI build uses Solid Universal and shares the OpenCode host runtime", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const root = path.resolve(import.meta.dirname, "..");
+  const runtime = fs.readFileSync(path.join(root, "dist/tui-runtime.js"), "utf8");
+  const standalone = fs.readFileSync(path.join(root, "dist/tui-standalone.js"), "utf8");
+  const loader = fs.readFileSync(path.join(root, "dist/tui.js"), "utf8");
+  assert.match(runtime, /opentui:runtime-module:%40opentui%2Fsolid/);
+  assert.match(runtime, /opentui:runtime-module:solid-js/);
+  assert.doesNotMatch(runtime, /@opentui\/solid\/jsx-runtime|from ["']@opentui\/solid["']|from ["']solid-js["']/);
+  assert.doesNotMatch(runtime, /from ["']@opencode\/plugin\/tui["']/);
+  assert.doesNotMatch(runtime, /_jsx\(|_jsxs\(/);
+  assert.match(standalone, /@opentui\/solid/);
+  assert.match(loader, /tui-runtime\.js/);
+  assert.match(loader, /tui-standalone\.js/);
+  assert.equal(typeof TuiPlugin.tui, "function");
+  assert.equal(typeof TuiPlugin.setup, "function");
+});

@@ -183,6 +183,8 @@ Run `opencode-guardian-status` with the installed package, or `node scripts/guar
 
 The package exports a dedicated `./tui` entrypoint for both **OpenCode 1** (`tui(api)` with additive `api.slots.register({ slots: { sidebar_content } })`) and **OpenCode 2** (`setup(context)` with `context.ui.slot({ append: "sidebar.content" })`). The plugin must be discovered through the host's TUI plugin configuration; installing the server plugin alone does not automatically enable the TUI extension. It adds a compact Guardian section without replacing other sidebar widgets. The TUI reads the **local** event log, so a CLI connected to a remote server cannot display that server's counters. V1/V2 slot registration is mock-tested; live sidebar rendering on the specific target hosts remains to be verified. Native rendering requires `@opentui/core`, `@opentui/solid` and `solid-js`.
 
+The TUI is compiled with Solid Universal into `dist/tui-runtime.js` for OpenCode's shared `opentui:runtime-module` renderer, with a separate `dist/tui-standalone.js` for Node tests and an adaptive `dist/tui.js` entrypoint. This avoids requiring a separately installed `@opentui/solid` inside the OpenCode TUI host. The server entrypoint remains independent of the TUI dependencies.
+
 ### Optional pre-execution protection (strict opt-in)
 
 Set `"preflight": { "enabled": true }` in `opencode-guardian.json` to register a pre-execution shell-tool hook. This is **disabled by default**; the existing `session.idle` checks and `safety/destructive-operations: warn` behavior remain unchanged.

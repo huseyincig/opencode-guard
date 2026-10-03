@@ -31,6 +31,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "postbuild": "node scripts/emit-tui.mjs",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs",
     "prepack": "npm run build"
@@ -57,11 +58,14 @@
   },
   "homepage": "https://github.com/huseyincig/opencode-guardian#readme",
   "devDependencies": {
+    "@babel/core": "^7.29.7",
+    "@babel/preset-typescript": "^7.27.1",
     "@opencode-ai/plugin": "^1.18.34",
     "@opencode/plugin": "^2.0.21",
     "@opentui/core": "^0.5.14",
     "@opentui/solid": "^0.5.14",
     "@types/node": "^22.0.0",
+    "babel-preset-solid": "^1.9.12",
     "solid-js": "^1.9.12",
     "typescript": "^5.8.0"
   },
