@@ -6,6 +6,7 @@ import { extractTaskContract, taskGuidance } from "./task-contract.js";
 import type { TaskContract } from "./task-contract.js";
 import { evaluatePreflight, GuardianPreflightError, isShellExecutionTool } from "./preflight.js";
 import { recordGuardianEvent, sessionFingerprint } from "./telemetry.js";
+import { announceGuardianUpdate } from "./version-notice.js";
 
 export * from "./types.js";
 export * from "./engine.js";
@@ -210,6 +211,7 @@ const server: OpenCodeV1ServerPlugin = async ({ client, directory }) => {
   const engine = new GuardEngine(config);
   const contracts = new Map<string, TaskContract>();
   let promptSequence = 0;
+  let updateChecked = false;
   const strictPreflight = config.preflight?.enabled === true;
   recordGuardianEvent({ kind: "runtime-started", runtime: "v1", preflight: strictPreflight ? "active" : "disabled" });
 
@@ -247,6 +249,16 @@ const server: OpenCodeV1ServerPlugin = async ({ client, directory }) => {
         properties?: { sessionID?: string };
         data?: { sessionID?: string; info?: { id?: string } };
       };
+
+      if (eventData.type === "session.created" && !updateChecked && config.updateNotice?.enabled !== false) {
+        updateChecked = true;
+        const tui = (client as unknown as { tui?: { showToast?: (input: { body: { title: string; message: string; variant: "info"; duration: number } }) => Promise<unknown> } }).tui;
+        if (typeof tui?.showToast === "function") {
+          void announceGuardianUpdate((current, latest) => tui.showToast!({
+            body: { title: "OpenCode Guardian — New version", message: `v${current} → v${latest} (update manually)`, variant: "info", duration: 5000 },
+          }));
+        }
+      }
 
       if (eventData.type === "session.deleted") {
         const deletedSessionID =
