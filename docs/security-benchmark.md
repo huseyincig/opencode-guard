@@ -1,5 +1,7 @@
 # Synthetic security benchmark
 
+Guardian **0.4.3** retains the frozen 17-case non-executing benchmark. Release verification also runs the broader unit/regression suite and 18 sandbox scenarios; this document does not claim live V2 host validation.
+
 The frozen test set is defined in [the benchmark tests](https://github.com/huseyincig/opencode-guardian/blob/main/tests/security-benchmark.test.mjs).
 
 Separate [shell-gap regressions](https://github.com/huseyincig/opencode-guardian/blob/main/tests/security-gap-regression.test.mjs) cover backticks, plain `rm` and inert examples. [Audit regressions](https://github.com/huseyincig/opencode-guardian/blob/main/tests/security-audit-regression.test.mjs) cover questions versus consent and strict V2 setup errors. These are outside the 17-case benchmark.

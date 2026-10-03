@@ -5,7 +5,7 @@
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
 [![CI](https://github.com/huseyincig/opencode-guardian/actions/workflows/ci.yml/badge.svg)](https://github.com/huseyincig/opencode-guardian/actions/workflows/ci.yml)
 
-A TypeScript quality and safety plugin for **OpenCode** AI agents. Current version: **0.4.2**.
+A TypeScript quality and safety plugin for **OpenCode** AI agents. Current version: **0.4.3**.
 
 Designed to detect common AI agent failure modes using request-time guidance and post-turn inspection: unsupported claims, responsibility evasion, silent failure masking, test weakening, unsafe destructive operations, hardcoded secrets, undeclared dependencies, incomplete implementations, and repetitive error loops.
 
@@ -13,11 +13,15 @@ Uses OpenCode's supported plugin hooks — **no manual markdown rules or system 
 
 ---
 
+## Version 0.4.3
+
+This release includes the startup notice for newer stable Guardian versions (24-hour cached npm check; no automatic installation), the additive V1 `sidebar_content` and V2 `sidebar.content` sidebar registrations, and official SDK typing for the V1 TUI adapter. Source and compiled TUI entrypoints are included. The server behavior and optional strict preflight remain unchanged. See [release notes](docs/release-0.4.3.md) for verification scope and limitations.
+
 ## Features
 
 **OpenCode Guardian** runs in-process with prebuilt TypeScript and provides:
 - **Task fidelity:** Captures explicit user requirements before model execution (V1 `chat.message`/system transform; V2 `prompt`/`context` hooks) and checks completion on `session.idle`. Historical deferrals do not override a new explicit instruction.
-- **Prebuilt server:** Compiled JavaScript with no added server runtime dependencies; the optional V2 TUI uses the host’s UI runtime.
+- **Prebuilt server:** Compiled JavaScript with no added server runtime dependencies; the optional V1/V2 TUI uses the host's UI runtime.
 - **V1/V2 adapters:** V1 was tested with OpenCode 1.18.34 on an earlier revision. V2 is typechecked and mock-host tested; live V2 validation remains outstanding. See [verification](#testing-and-verification).
 - **Pre-Built Distribution:** Pre-compiled `dist/` is included in the package and git repository — no build toolchain (`tsc`) required on target systems.
 - **Evidence-Aware Inspection:** Correlates tool commands, exit codes, test/build/audit results, file mutations, git state, baseline checks, and normalized error fingerprints before deciding.
@@ -290,6 +294,8 @@ npm pack --dry-run
 ```
 
 CI runs the full verification sequence on Node **22** and **24**. The tests cover active backticks and plain removals, deletion questions versus explicit scoped authorization, strict V2 preflight failure on incomplete contexts/invalid event subscriptions, partial-V2 fallback when strict mode is off, remediation budgets, and the existing rule regressions. Live V2 host integration remains unverified.
+
+The `0.4.3` release is gated on Node 22/24 CI, typecheck, unit/regression tests, 18 sandbox scenarios, dependency checks and `npm pack --dry-run`. Mock host tests do not prove visual rendering on a live OpenCode terminal.
 
 ---
 

@@ -1,5 +1,7 @@
 # Task contract and OpenCode V1/V2 adapter design
 
+Applies to Guardian **0.4.3**. The server adapters and the separately exported TUI adapter have distinct host entrypoints: V1 uses `@opencode-ai/plugin/tui` with `tui(api)` / `sidebar_content`; V2 uses `@opencode/plugin/tui` with `setup(context)` / `sidebar.content`. The TUI SDK contracts are typechecked; live rendering on each host remains unverified.
+
 Implemented task controls and OpenCode V1/V2 adapter boundaries.
 
 ## Host API references
