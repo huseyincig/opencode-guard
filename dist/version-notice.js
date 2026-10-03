@@ -74,12 +74,14 @@ function writeCache(cachePath, latest, now) {
         fs.writeSync(fd, JSON.stringify({ checkedAt: now, latest }));
     }
     catch {
+        // Cache is best effort, never prevent OpenCode startup.
     }
     finally {
         if (fd !== undefined)
             fs.closeSync(fd);
     }
 }
+/** Network and filesystem failures are intentionally silent and never trigger an install. */
 export async function checkGuardianUpdate(options = {}) {
     if (!options.allowDevelopment &&
         (process.env.NODE_TEST_CONTEXT || !fileURLToPath(import.meta.url).includes("node_modules")))
@@ -111,12 +113,12 @@ export async function checkGuardianUpdate(options = {}) {
     }
     return newerStableVersion(current, latest) ? { current, latest } : undefined;
 }
+/** Fire-and-forget notification; all host UI errors are isolated from Guardian. */
 export async function announceGuardianUpdate(show, options) {
     try {
         const update = await checkGuardianUpdate(options);
         if (update)
             await show(update.current, update.latest);
     }
-    catch {
-    }
+    catch { /* Optional notifications must not affect Guardian. */ }
 }

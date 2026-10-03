@@ -27,8 +27,7 @@ const v2Plugin = Plugin.define({
         });
     },
 });
-
-/** V1 host SDK calls tui(api, options, meta); it owns registered slot IDs. */
+/** Use V1's actual SDK contract; V1 slot IDs are host-managed, not disposers. */
 const v1Tui = async (api) => {
     const config = loadConfig(api.state.path.directory);
     if (config.enabled === false)

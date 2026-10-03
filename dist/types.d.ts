@@ -17,6 +17,10 @@ export interface GuardConfig {
     preflight?: {
         enabled?: boolean;
     };
+    /** Passive startup update notice; enabled unless explicitly disabled. */
+    updateNotice?: {
+        enabled?: boolean;
+    };
     rules?: {
         "discipline/no-evasion"?: Severity | GuardRuleConfig;
         "discipline/no-apology"?: Severity | GuardRuleConfig;

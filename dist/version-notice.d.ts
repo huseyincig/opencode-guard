@@ -6,5 +6,10 @@ export interface UpdateCheckOptions {
     fetcher?: typeof fetch;
     allowDevelopment?: boolean;
 }
-export declare function checkGuardianUpdate(options?: UpdateCheckOptions): Promise<{ current: string; latest: string; } | undefined>;
+/** Network and filesystem failures are intentionally silent and never trigger an install. */
+export declare function checkGuardianUpdate(options?: UpdateCheckOptions): Promise<{
+    current: string;
+    latest: string;
+} | undefined>;
+/** Fire-and-forget notification; all host UI errors are isolated from Guardian. */
 export declare function announceGuardianUpdate(show: (current: string, latest: string) => Promise<unknown> | unknown, options?: UpdateCheckOptions): Promise<void>;
