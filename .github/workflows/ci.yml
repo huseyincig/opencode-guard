@@ -9,14 +9,15 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         node-version: [22.x, 24.x]
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -25,20 +26,24 @@ jobs:
       - run: npm test
       - run: node sandbox/smoke-test.mjs
       - run: node sandbox/comprehensive-test.mjs
-      - run: npm audit
+      # Published runtime dependencies must have no known advisories.
+      - run: npm audit --omit=dev
+      # The full dev audit remains visible and blocks any new advisory.
+      # One OpenCode SDK upstream chain currently has no patched release.
+      - run: node scripts/check-dev-audit.mjs
       - run: npm pack --dry-run
 
   cleanup-merged-branches:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: read
 
     steps:
       - name: Delete merged PR branches
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const { owner, repo } = context.repo

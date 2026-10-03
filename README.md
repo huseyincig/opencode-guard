@@ -167,6 +167,10 @@ To customize behavior, create `opencode-guardian.json` (or legacy `opencode-guar
 }
 ```
 
+### Dependency audit policy
+
+CI blocks on any production dependency advisory with `npm audit --omit=dev`. It also runs a full development-dependency audit through `scripts/check-dev-audit.mjs`. As of the v0.4.1 CI repair, Babel is overridden to a patched `7.29.7+` release. The remaining 12 high-severity npm reports refer to the **same unresolved upstream** `http-cache-semantics` advisory ([GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp)) propagated through the dev-only OpenCode V2 SDK dependency tree. The dev audit prints this exception and fails if new advisory sources or affected packages appear; these 12 reports are **not fixed**. Avoid using development SDK dependencies as production runtime dependencies. When upstream publishes a fix, update the lockfile and remove the exception.
+
 ### Guardian event log, status command, and optional V2 sidebar
 
 Guardian records **minimal redacted events** in `~/.local/state/opencode-guardian/events.jsonl` (or `OPENCODE_GUARDIAN_STATE_DIR/events.jsonl`). The directory is created with mode `0700` and the file with `0600` on POSIX. Events include plugin startup, inspected **shell** calls (when strict preflight is enabled), pre-execution blocks, post-turn warnings/remediations, and inspection errors. No raw commands, prompts, tool arguments, credentials, or original session IDs are written; session IDs are short SHA-256 fingerprints. Logging is best-effort and does not block tool execution if its directory is unwritable.

@@ -82,5 +82,8 @@
     "solid-js": {
       "optional": true
     }
+  },
+  "overrides": {
+    "@babel/core": "^7.29.7"
   }
 }
