@@ -27,6 +27,7 @@ test("V1 TUI registers sidebar_content as an additive slot and renders the Guard
   let claim;
   let calls = 0;
   const registration = await TuiPlugin.tui({
+    state: { path: { directory: process.cwd() } },
     slots: {
       register(input) { calls++; claim = input; return "guardian-v1-slot"; },
     },
@@ -35,6 +36,7 @@ test("V1 TUI registers sidebar_content as an additive slot and renders the Guard
   assert.equal(calls, 1);
   assert.equal(claim.order, 600);
   assert.equal(typeof claim.slots.sidebar_content, "function");
+  assert.equal(claim.id, undefined, "V1 host assigns slot IDs");
   // Full rendering belongs to the actual TUI host; mock tests verify registration.
   assert.equal(TuiPlugin.server, undefined);
 });
@@ -42,7 +44,7 @@ test("V1 TUI registers sidebar_content as an additive slot and renders the Guard
 test("V1 and V2 sidebar registration APIs coexist in the same package entrypoint", async () => {
   let v1 = false;
   let v2 = false;
-  await TuiPlugin.tui({ slots: { register(input) {
+  await TuiPlugin.tui({ state: { path: { directory: process.cwd() } }, slots: { register(input) {
     v1 = typeof input.slots.sidebar_content === "function";
     return "guardian-v1-slot";
   } } });

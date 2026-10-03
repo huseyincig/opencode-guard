@@ -28,20 +28,22 @@ const v2Plugin = Plugin.define({
     },
 });
 
-export default {
-    ...v2Plugin,
-    async tui(api) {
-        const config = loadConfig(api.state?.path?.directory ?? process.cwd());
-        if (config.enabled === false)
-            return;
-        // V1 owns the registration lifecycle. This entrypoint exports no server hook.
-        api.slots.register({
-            order: 600,
-            slots: {
-                sidebar_content() {
-                    return _jsx(GuardianSidebar, {});
-                },
+/** V1 host SDK calls tui(api, options, meta); it owns registered slot IDs. */
+const v1Tui = async (api) => {
+    const config = loadConfig(api.state.path.directory);
+    if (config.enabled === false)
+        return;
+    api.slots.register({
+        order: 600,
+        slots: {
+            sidebar_content(_context, _props) {
+                return _jsx(GuardianSidebar, {});
             },
-        });
-    },
+        },
+    });
 };
+const guardianTui = {
+    ...v2Plugin,
+    tui: v1Tui,
+};
+export default guardianTui;

@@ -1,5 +1,6 @@
 /** Dedicated TUI entrypoint: OpenCode 1 (tui / sidebar_content) and 2 (setup / sidebar.content). */
 import { Plugin } from "@opencode/plugin/tui";
+import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui";
 import { createSignal, onCleanup } from "solid-js";
 import { readGuardianStatus } from "./telemetry.js";
 import { loadConfig } from "./engine.js";
@@ -38,30 +39,23 @@ const v2Plugin = Plugin.define({
 });
 
 
-/** OpenCode 1 TUI API is separate from the V2 setup/slot API. */
-type V1TuiApi = {
-  state?: { path?: { directory?: string } };
-  slots: {
-    register(input: {
-      order: number;
-      slots: { sidebar_content: () => ReturnType<typeof GuardianSidebar> };
-    }): unknown;
-  };
+/** Use V1's actual SDK contract; V1 slot IDs are host-managed, not disposers. */
+const v1Tui: TuiPlugin = async (api: TuiPluginApi) => {
+  const config = loadConfig(api.state.path.directory);
+  if (config.enabled === false) return;
+  api.slots.register({
+    order: 600,
+    slots: {
+      sidebar_content(_context, _props) {
+        return <GuardianSidebar />;
+      },
+    },
+  });
 };
 
-export default {
+const guardianTui: TuiPluginModule & Plugin.Definition = {
   ...v2Plugin,
-  async tui(api: V1TuiApi) {
-    const config = loadConfig(api.state?.path?.directory ?? process.cwd());
-    if (config.enabled === false) return;
-    // V1 owns the registration lifecycle. This entrypoint exports no server hook.
-    api.slots.register({
-      order: 600,
-      slots: {
-        sidebar_content() {
-          return <GuardianSidebar />;
-        },
-      },
-    });
-  },
+  tui: v1Tui,
 };
+
+export default guardianTui;
