@@ -243,6 +243,24 @@ flowchart TD
 
 ---
 
+## 🔬 Scientific Foundation & Academic Research
+
+OpenCode Guardian's architecture and security models are grounded in peer-reviewed computer science literature and industry security frameworks:
+
+1. **"Guardians of the Agents" (Erik Meijer, Communications of the ACM, Dec 2025):**
+   - **Theoretical Foundation:** In [*Guardians of the Agents*](https://doi.org/10.1145/3777544) (*Communications of the ACM*, DOI: [`10.1145/3777544`](https://doi.org/10.1145/3777544)), Erik Meijer formalized the paradigm of using independent, host-level supervisory software ("Guardians") that monitor and enforce behavioral invariants over autonomous AI agents before and after tool execution, without requiring prompt-level instructions or modifying model weights.
+   - **Guardian Implementation:** OpenCode Guardian directly realizes this paradigm through its dual-mode engine, evaluating preflight invariants before execution and correlating multi-step evidence at `session.idle`.
+
+2. **The GuardFall Vulnerability Research (Adversa AI, June 2026):**
+   - **Vulnerability Context:** Discovered by Adversa AI in June 2026, the *GuardFall* research revealed systemic flaws across 10 out of 11 popular coding agents where string-matching blocklists failed to detect obfuscated shell commands (such as quote removal `r''m`, variable expansion `$IFS`, paired backtick substitution, and encoded Base64 pipelines).
+   - **Guardian Defense:** OpenCode Guardian incorporates dedicated AST-aware pattern recognition ([`src/shell-risk.ts`](src/shell-risk.ts)) and regression suites ([`tests/guardfall-regression.test.mjs`](tests/guardfall-regression.test.mjs)) to neutralize GuardFall-style bypasses in both advisory inspection and strict preflight.
+
+3. **OWASP Top 10 for Agentic Applications (2026):**
+   - OpenCode Guardian is architected to address critical vulnerabilities defined in the OWASP Agentic Top 10 framework, including **ASI01** (Agent Goal Hijacking), **ASI02** (Tool Misuse), **ASI03** (Identity & Privilege Abuse), **ASI05** (Unexpected Code Execution), and **ASI08** (Cascading Failures).
+   - Detailed mapping and capability boundaries are documented in [`docs/owasp-agentic-top10-2026.md`](docs/owasp-agentic-top10-2026.md).
+
+---
+
 ## Verification & Testing
 
 OpenCode Guardian is backed by a comprehensive automated test suite:
