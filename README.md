@@ -5,7 +5,7 @@
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
 [![CI](https://github.com/huseyincig/opencode-guardian/actions/workflows/ci.yml/badge.svg)](https://github.com/huseyincig/opencode-guardian/actions/workflows/ci.yml)
 
-A TypeScript quality and safety plugin for **OpenCode** AI agents. **npm: v0.4.0; GitHub `main`: v0.4.1 source.** See [CHANGELOG.md](CHANGELOG.md) for changes, release status and verification limits.
+A TypeScript quality and safety plugin for **OpenCode** AI agents. See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 Designed to detect common AI agent failure modes using request-time guidance and post-turn inspection: unsupported claims, responsibility evasion, silent failure masking, test weakening, unsafe destructive operations, hardcoded secrets, undeclared dependencies, incomplete implementations, and repetitive error loops.
 
@@ -30,14 +30,12 @@ Uses OpenCode's supported plugin hooks — **no manual markdown rules or system 
 
 ### Method 1: npm package
 
-`0.4.0` is available on npm. The `0.4.1` features described below are currently in GitHub source only; use the local method for those changes.
-
 **OpenCode v1:**
 
 ```json
 {
   "plugin": [
-    "opencode-guardian@0.4.0"
+    "opencode-guardian@latest"
   ]
 }
 ```
@@ -47,7 +45,7 @@ Uses OpenCode's supported plugin hooks — **no manual markdown rules or system 
 ```json
 {
   "plugins": [
-    "opencode-guardian@0.4.0"
+    "opencode-guardian@latest"
   ]
 }
 ```
@@ -175,7 +173,7 @@ CI blocks on any production dependency advisory with `npm audit --omit=dev`. It 
 
 Guardian records **minimal redacted events** in `~/.local/state/opencode-guardian/events.jsonl` (or `OPENCODE_GUARDIAN_STATE_DIR/events.jsonl`). The directory is created with mode `0700` and the file with `0600` on POSIX. Events include plugin startup, inspected **shell** calls (when strict preflight is enabled), pre-execution blocks, post-turn warnings/remediations, and inspection errors. No raw commands, prompts, tool arguments, credentials, or original session IDs are written; session IDs are short SHA-256 fingerprints. Logging is best-effort and does not block tool execution if its directory is unwritable.
 
-For the current GitHub source, run `node scripts/guardian-status.mjs` in the repository. After `0.4.1` is published, use `opencode-guardian-status` from the installed package. Both show counters and the last-start preflight state. Counters are calculated from the newest **2 MiB** of the log; when older entries are omitted, the command and sidebar explicitly say so. The displayed preflight state reflects the **last recorded successful plugin start**, not proof that a plugin process is currently alive. Only shell calls checked by strict preflight count as "inspected"; a zero does not mean that no other tools ran.
+Run `opencode-guardian-status` with the installed package, or `node scripts/guardian-status.mjs` from the repository. The command shows counters and the last-start preflight state. Counters are calculated from the newest **2 MiB** of the log; when older entries are omitted, the command and sidebar explicitly say so. The displayed preflight state reflects the **last recorded successful plugin start**, not proof that a plugin process is currently alive. Only shell calls checked by strict preflight count as "inspected"; a zero does not mean that no other tools ran.
 
 On compatible **OpenCode V2** CLI builds, the package also exports `./tui`. The sidebar appears if the CLI discovers and loads that TUI entrypoint; this has not yet been visually verified on a live V2 host. It **appends** a compact Guardian section to `sidebar.content`; it does not replace built-in widgets or other plugins' sections. The TUI reads the **local** log, so a CLI connected to a server on a different machine cannot display that server's counters. OpenCode V1 continues to use the server plugin and status command; there is no V1 sidebar API assumed here. Native TUI rendering requires the host's `@opentui/core`, `@opentui/solid` and `solid-js` runtime.
 

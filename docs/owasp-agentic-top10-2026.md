@@ -1,6 +1,6 @@
 # OWASP Agentic Top 10 (2026): Guardian coverage and limits
 
-Coverage mapped against the **v0.4.0** source. This is a feature-and-gap map, not an OWASP certification.
+Coverage mapped against the current **v0.4.1** source. This is a feature-and-gap map, not an OWASP certification.
 
 Sources: [OWASP Agentic Top 10 (December 2025)](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) and the [OWASP release explanation](https://genai.owasp.org/2025/12/09/owasp-top-10-for-agentic-applications-the-benchmark-for-agentic-security-in-the-age-of-autonomous-ai/).
 
