@@ -340,3 +340,47 @@ test("existing remediation fingerprints prevent duplicate prompts on concurrent 
   assert.equal(outcomes.filter((result) => result.decision === "block").length, 1);
   assert.equal(outcomes.filter((result) => result.decision === "pass").length, 1);
 });
+
+test("Node dependency cache follows package.json edits in the same five-second window", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-node-manifest-edit-"));
+  try {
+    const manifest = path.join(root, "package.json");
+    fs.writeFileSync(manifest, JSON.stringify({ dependencies: {} }));
+    clearDeclaredDepsCache();
+    const ctx = context([tool({
+      path: path.join(root, "app.js"), content: 'import external from "new-lib";',
+    })]);
+    ctx.directory = root;
+    assert.equal(noGhostDepsRule.inspect(ctx).decision, "block");
+    fs.writeFileSync(manifest, JSON.stringify({ dependencies: { "new-lib": "1.0.0" } }));
+    const checked = noGhostDepsRule.inspect(ctx);
+    assert.equal(checked.decision, "pass");
+    assert.equal(checked.findings.length, 0);
+  } finally {
+    clearDeclaredDepsCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Python dependency cache follows included requirements edits immediately", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-python-manifest-edit-"));
+  try {
+    fs.writeFileSync(path.join(root, "requirements.txt"), "-r nested.txt\n");
+    const nested = path.join(root, "nested.txt");
+    fs.writeFileSync(nested, "# empty\n");
+    clearDeclaredDepsCache();
+    const ctx = context([tool({
+      path: path.join(root, "app.py"), content: "import brand_new\n",
+    })]);
+    ctx.directory = root;
+    ctx.ruleConfig = { blockPythonGhostDeps: true };
+    assert.equal(noGhostDepsRule.inspect(ctx).decision, "block");
+    fs.writeFileSync(nested, "brand-new>=1\n");
+    const checked = noGhostDepsRule.inspect(ctx);
+    assert.equal(checked.decision, "pass");
+    assert.equal(checked.findings.length, 0);
+  } finally {
+    clearDeclaredDepsCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -182,3 +182,28 @@ test("V2 opt-in fails visibly when the preflight hook is unavailable", async (t)
     /preflight.*registration failed/);
   assert.equal(invalidRegistration.signal.aborted, true);
 });
+
+test("literal shell wrappers and quoted multiline scripts cannot hide file removal", () => {
+  const remove = ["r", "m marker"].join("");
+  for (const command of [
+    `sudo bash -c "${remove}"`,
+    `bash -lc "${remove}"`,
+    `bash -c 'echo "safe"; ${remove}'`,
+    `bash -c 'echo safe\n${remove}'`,
+  ]) {
+    assert.equal(evaluatePreflight("bash", { command }), "destructive-command", command);
+  }
+  // A quoted example printed by the shell is not an executed removal.
+  assert.equal(evaluatePreflight("bash", { command: `bash -c 'echo "${remove}"'` }), undefined);
+});
+
+test("decoded shell pipelines remain opaque behind sudo wrappers", () => {
+  const sudo = ["su", "do"].join("");
+  for (const command of [
+    `printf YWJj | base64 -d | ${sudo} sh`,
+    `printf YWJj | ${sudo} base64 --decode | bash`,
+  ]) {
+    assert.equal(evaluatePreflight("bash", { command }), "opaque-shell-execution", command);
+  }
+  assert.equal(evaluatePreflight("bash", { command: "printf YWJj | base64 -d" }), undefined);
+});

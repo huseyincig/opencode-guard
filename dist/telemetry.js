@@ -23,8 +23,22 @@ export function recordGuardianEvent(event) {
     try {
         const dir = guardianStateDirectory();
         fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-        const fd = fs.openSync(guardianEventPath(), fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT, 0o600);
+        const directory = fs.lstatSync(dir);
+        // A pre-existing shared directory or a symlink must not expose the log.
+        if (!directory.isDirectory() || (process.platform !== "win32" &&
+            ((directory.mode & 0o077) !== 0 ||
+                (typeof process.getuid === "function" && directory.uid !== process.getuid())))) {
+            throw new Error("Guardian state directory is not private to the current user");
+        }
+        const fd = fs.openSync(guardianEventPath(), fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
         try {
+            const file = fs.fstatSync(fd);
+            if (!file.isFile() || (typeof process.getuid === "function" && file.uid !== process.getuid())) {
+                throw new Error("Guardian event log is not a regular file owned by the current user");
+            }
+            if (process.platform !== "win32" && (file.mode & 0o777) !== 0o600) {
+                fs.fchmodSync(fd, 0o600);
+            }
             const safe = {
                 at: new Date().toISOString(), kind: event.kind,
                 ...(event.runtime ? { runtime: event.runtime } : {}),

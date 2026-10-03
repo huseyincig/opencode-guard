@@ -169,11 +169,13 @@ export function activeBacktickSubstitutions(command) {
 /** Literal script passed to a shell; dynamic scripts are not decoded here. */
 export function literalShellScripts(command) {
     const scripts = [];
-    const pattern = /^\s*(?:env\s+)?(?:sh|bash|zsh|dash)\s+-c\s+(["'])([^"'\n]+)\1/;
+    // Match literal shell scripts, including common sudo wrappers and -lc.
+    // Opposite quote types and newlines are legal inside an outer quoted script.
+    const pattern = /^\s*(?:sudo\s+)?(?:env\s+)?(?:sh|bash|zsh|dash)\s+-[a-z]*c[a-z]*\s+(?:'([^']*)'|"((?:\\.|[^"\\])*)")(?=\s|$)/i;
     for (const stage of splitShellStages(command).flat()) {
         const match = pattern.exec(stage);
         if (match)
-            scripts.push(match[2]);
+            scripts.push(match[1] ?? match[2]);
     }
     return scripts;
 }
@@ -186,6 +188,6 @@ export function hasFindDeletion(command) {
  * signal only: it does not prove that the decoded payload is destructive.
  */
 export function isOpaqueShellExecution(command) {
-    return splitShellStages(command).some((stages) => stages.some((stage, index) => /^\s*(?:env\s+)?(?:openssl\s+)?base64\s+(?:-[dD]\b|--decode\b)/i.test(stage) &&
-        /^\s*(?:env\s+)?(?:sh|bash|zsh|dash)(?=\s|$)/i.test(stages[index + 1] ?? "")));
+    return splitShellStages(command).some((stages) => stages.some((stage, index) => /^\s*(?:sudo\s+)?(?:env\s+)?(?:openssl\s+)?base64\s+(?:-[dD]\b|--decode\b)/i.test(stage) &&
+        /^\s*(?:sudo\s+)?(?:env\s+)?(?:sh|bash|zsh|dash)(?=\s|$)/i.test(stages[index + 1] ?? "")));
 }

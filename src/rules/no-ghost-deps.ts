@@ -66,9 +66,21 @@ const AMBIGUOUS_PYTHON_NAMESPACES = new Set([
 
 const DEPS_CACHE = new Map<
   string,
-  { timestamp: number; deps: Set<string> | null }
+  { timestamp: number; deps: Set<string> | null; manifestPath: string; revision: string; files: string[] }
 >();
 const CACHE_TTL_MS = 5000;
+
+/** Cache only while the actual manifest files have not changed. */
+function filesRevision(files: string[]): string {
+  return files.map((file) => {
+    try {
+      const stat = fs.statSync(file, { bigint: true });
+      return `${file}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+    } catch {
+      return `${file}:missing`;
+    }
+  }).join("|");
+}
 
 export function clearDeclaredDepsCache(): void {
   DEPS_CACHE.clear();
@@ -130,26 +142,24 @@ function dependenciesFromPackage(pkg: Record<string, unknown>): Set<string> {
 function loadNodeDependencies(directory: string): Set<string> | null {
   const resolvedDir = path.resolve(directory);
   const cacheKey = `node:${resolvedDir}`;
+  const manifest = nearestFile(resolvedDir, ["package.json"]);
+  if (!manifest) return null;
+
+  const files = [manifest.path];
+  const revision = filesRevision(files);
   const cached = DEPS_CACHE.get(cacheKey);
   const now = Date.now();
-  if (cached && now - cached.timestamp < CACHE_TTL_MS) return cached.deps;
-
-  const manifest = nearestFile(resolvedDir, ["package.json"]);
-  if (!manifest) {
-    DEPS_CACHE.set(cacheKey, { timestamp: now, deps: null });
-    return null;
-  }
+  if (cached && cached.manifestPath === manifest.path && cached.revision === revision &&
+      now - cached.timestamp < CACHE_TTL_MS) return cached.deps;
 
   try {
     const pkg = JSON.parse(fs.readFileSync(manifest.path, "utf8"));
-    const result =
-      pkg && typeof pkg === "object" && !Array.isArray(pkg)
-        ? dependenciesFromPackage(pkg as Record<string, unknown>)
-        : null;
-    DEPS_CACHE.set(cacheKey, { timestamp: now, deps: result });
+    const result = pkg && typeof pkg === "object" && !Array.isArray(pkg)
+      ? dependenciesFromPackage(pkg as Record<string, unknown>) : null;
+    DEPS_CACHE.set(cacheKey, { timestamp: now, deps: result, manifestPath: manifest.path, revision, files });
     return result;
   } catch {
-    DEPS_CACHE.set(cacheKey, { timestamp: now, deps: null });
+    DEPS_CACHE.delete(cacheKey);
     return null;
   }
 }
@@ -328,44 +338,41 @@ function loadPythonDependencies(
   const cacheKey = `python:${manifest.root}`;
   const cached = DEPS_CACHE.get(cacheKey);
   const now = Date.now();
-  if (cached && now - cached.timestamp < CACHE_TTL_MS && cached.deps) {
+  if (cached?.deps && cached.manifestPath === manifest.path &&
+      cached.revision === filesRevision(cached.files) &&
+      now - cached.timestamp < CACHE_TTL_MS) {
     return { deps: cached.deps, root: manifest.root };
   }
 
   try {
     const deps = new Set<string>();
     const pyproject = path.join(manifest.root, "pyproject.toml");
+    const files = [manifest.root, pyproject];
     if (fs.existsSync(pyproject)) {
       for (const dep of parsePythonManifest(
-        fs.readFileSync(pyproject, "utf8"),
-        "pyproject.toml"
-      )) {
-        deps.add(dep);
-      }
+        fs.readFileSync(pyproject, "utf8"), "pyproject.toml"
+      )) deps.add(dep);
     }
 
-    const requirementFiles = fs
-      .readdirSync(manifest.root)
-      .filter(
-        (name) =>
-          /^requirements(?:[-_.][A-Za-z0-9_-]+)?\.txt$/i.test(name) ||
-          name === "requirements.in"
-      )
-      .sort();
-
+    const requirementFiles = fs.readdirSync(manifest.root)
+      .filter((name) =>
+        /^requirements(?:[-_.][A-Za-z0-9_-]+)?\.txt$/i.test(name) ||
+        name === "requirements.in"
+      ).sort();
+    const seen = new Set<string>();
     for (const name of requirementFiles) {
       for (const dep of parseRequirementsFile(
-        path.join(manifest.root, name),
-        manifest.root
-      )) {
-        deps.add(dep);
-      }
+        path.join(manifest.root, name), manifest.root, seen
+      )) deps.add(dep);
     }
-
-    DEPS_CACHE.set(cacheKey, { timestamp: now, deps });
+    files.push(...seen);
+    DEPS_CACHE.set(cacheKey, {
+      timestamp: now, deps, manifestPath: manifest.path,
+      revision: filesRevision(files), files,
+    });
     return { deps, root: manifest.root };
   } catch {
-    DEPS_CACHE.set(cacheKey, { timestamp: now, deps: null });
+    DEPS_CACHE.delete(cacheKey);
     return null;
   }
 }

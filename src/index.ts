@@ -198,10 +198,19 @@ function inspectPreflight(tool: string, args: unknown, sessionID?: string): void
 
 const server: OpenCodeV1ServerPlugin = async ({ client, directory }) => {
   const config = loadConfig(directory);
+  if (config.enabled === false) {
+    recordGuardianEvent({ kind: "runtime-started", runtime: "v1", preflight: "disabled" });
+    // Preserve the V1 hook shape without inspecting turns or injecting context.
+    return {
+      "chat.message": async () => {},
+      "experimental.chat.system.transform": async () => {},
+      event: async () => {},
+    };
+  }
   const engine = new GuardEngine(config);
   const contracts = new Map<string, TaskContract>();
   let promptSequence = 0;
-  const strictPreflight = config.enabled !== false && config.preflight?.enabled === true;
+  const strictPreflight = config.preflight?.enabled === true;
   recordGuardianEvent({ kind: "runtime-started", runtime: "v1", preflight: strictPreflight ? "active" : "disabled" });
 
   return {
@@ -290,7 +299,11 @@ const setup: OpenCodeV2.Plugin["setup"] = async (
   // silently disappear merely because another v2 capability is unavailable.
   const directory = context?.location?.directory ?? process.cwd();
   const config = loadConfig(directory);
-  const strictPreflight = config.enabled !== false && config.preflight?.enabled === true;
+  if (config.enabled === false) {
+    recordGuardianEvent({ kind: "runtime-started", runtime: "v2", preflight: "disabled" });
+    return;
+  }
+  const strictPreflight = config.preflight?.enabled === true;
   if (
     !context ||
     typeof context !== "object" ||
@@ -355,8 +368,9 @@ const setup: OpenCodeV2.Plugin["setup"] = async (
   }
 
   if (typeof context.session.hook === "function") {
+    const taskRegistrations: Array<{ dispose(): Promise<void> | void }> = [];
     try {
-      registrations.push(await context.session.hook("prompt", (event) => {
+      const promptRegistration = await context.session.hook("prompt", (event) => {
         const text = event.prompt.text;
         if (!text || text.trimStart().startsWith("[opencode-guardian remediation]")) {
           return;
@@ -366,18 +380,31 @@ const setup: OpenCodeV2.Plugin["setup"] = async (
           parts: [{ type: "text", text }],
         }]);
         if (contract) contracts.set(event.sessionID, contract);
-      }));
-      registrations.push(await context.session.hook("context", (event) => {
+      });
+      if (!promptRegistration || typeof promptRegistration.dispose !== "function") {
+        throw new Error("V2 prompt hook did not return a valid registration.");
+      }
+      taskRegistrations.push(promptRegistration);
+      const contextRegistration = await context.session.hook("context", (event) => {
         const contract = contracts.get(event.sessionID);
         if (!contract) return;
         const guidance = taskGuidance(contract);
         if (guidance && !event.system.some((part) => part.text === guidance)) {
           event.system.push({ type: "text", text: guidance, metadata: { "opencode-guardian": true } });
         }
-      }));
+      });
+      if (!contextRegistration || typeof contextRegistration.dispose !== "function") {
+        throw new Error("V2 context hook did not return a valid registration.");
+      }
+      taskRegistrations.push(contextRegistration);
+      registrations.push(...taskRegistrations);
     } catch (error) {
-      // Transition/beta hosts may expose a hook method without supporting
-      // these registrations. Preserve idle inspection and fail open.
+      // Beta hosts may support only one hook. Undo partial registration now,
+      // rather than leaving an orphaned prompt hook until plugin shutdown.
+      await Promise.allSettled(taskRegistrations.map((registration) =>
+        Promise.resolve().then(() => registration.dispose())
+      ));
+      contracts.clear();
       console.error("[opencode-guardian] V2 task hooks unavailable:", error);
     }
   }

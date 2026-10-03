@@ -94,3 +94,36 @@ test("V2 strict preflight records actual pre-execution decisions", async (t) => 
     await cleanup();
   }
 });
+
+test("existing event logs are restricted to user-only access before appending", (t) => {
+  isolated(t);
+  fs.writeFileSync(guardianEventPath(), "");
+  fs.chmodSync(guardianEventPath(), 0o644);
+  recordGuardianEvent({ kind: "runtime-started", runtime: "v1", preflight: "disabled" });
+  assert.equal(fs.statSync(guardianEventPath()).mode & 0o777, 0o600);
+  assert.equal(readGuardianStatus().preflight, "disabled");
+});
+
+test("telemetry refuses symlink event logs without modifying their target", (t) => {
+  if (process.platform === "win32") return;
+  const dir = isolated(t);
+  const target = path.join(dir, "target.log");
+  fs.writeFileSync(target, "not a guardian log\n");
+  fs.symlinkSync(target, guardianEventPath());
+  const priorError = console.error;
+  console.error = (...args) => { void args; };
+  try {
+    recordGuardianEvent({ kind: "runtime-started", runtime: "v1", preflight: "active" });
+  } finally {
+    console.error = priorError;
+  }
+  assert.equal(fs.readFileSync(target, "utf8"), "not a guardian log\n");
+});
+
+test("telemetry refuses a pre-existing publicly traversable state directory", (t) => {
+  if (process.platform === "win32") return;
+  const dir = isolated(t);
+  fs.chmodSync(dir, 0o755);
+  recordGuardianEvent({ kind: "runtime-started", runtime: "v1", preflight: "active" });
+  assert.equal(fs.existsSync(guardianEventPath()), false);
+});
