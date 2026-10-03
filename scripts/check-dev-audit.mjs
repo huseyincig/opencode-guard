@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 /** Keep the dev dependency audit visible and fail on any new advisory. */
 import { spawnSync } from "node:child_process";
+import path from "node:path";
 
 const audit = spawnSync("npm", ["audit", "--json"], {
+  cwd: path.resolve(import.meta.dirname, ".."),
   encoding: "utf8",
   maxBuffer: 16 * 1024 * 1024,
 });
