@@ -10,7 +10,6 @@ export interface GuardRuleConfig {
 }
 export interface GuardConfig {
     enabled?: boolean;
-    debug?: boolean;
     remediationBudget?: number;
     /** Separate, bounded continuation budget for explicit iterative tasks (0..5). */
     iterationBudget?: number;

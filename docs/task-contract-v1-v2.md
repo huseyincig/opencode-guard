@@ -1,6 +1,6 @@
 # Task contract and OpenCode V1/V2 adapter design
 
-This document describes the implemented task controls and OpenCode adapters. For version history, publication and live-host verification status, see the [changelog](../CHANGELOG.md).
+Implemented task controls and OpenCode V1/V2 adapter boundaries.
 
 ## Host API references
 
@@ -9,7 +9,7 @@ This document describes the implemented task controls and OpenCode adapters. For
 - OpenCode's [V1-to-V2 migration documentation](https://opencode.ai/v2/docs/build/plugins/migrate-v1/): hook boundaries are **not** interchangeable; `ctx.location` refers to where the plugin loaded, not to every session's current location.
 - Adapter typing was checked against `@opencode-ai/plugin` **1.18.34** and `@opencode/plugin` **2.0.21**. Runtime hook delivery must still be checked on the target host.
 
-See [international task policy](international-policy.md) for locale support and the optional typed directive.
+Supported languages and the optional typed directive are documented in the [README](../README.md#language-neutral-task-decisions).
 
 ## Adapter lifecycle
 
@@ -22,6 +22,8 @@ See [international task policy](international-policy.md) for locale support and 
 | Observe lifecycle | Returned `event` callback | `ctx.event.subscribe({signal})` async iterable |
 | Resolve session directory | V1 plugin's known project directory | Prefer `ctx.session.get({sessionID}).location.directory`; fall back to `ctx.location.directory` |
 | Unload | V1 hook lifecycle | Abort the event stream and dispose registered hook handles |
+| Pre-execution shell check (opt-in) | `tool.execute.before` | `ctx.tool.hook("execute.before")` |
+| Optional sidebar | Not provided | Root `tui.js` for local paths or package `./tui`; append to `sidebar.content` |
 
 OpenCode V2 partial or transition contexts are ignored if required event/session capabilities are absent **only when strict preflight is off**. When `preflight.enabled` is true and the plugin is enabled, incomplete host context, invalid/unavailable event subscription or missing/invalid tool hook registration triggers an explicit setup error instead of silently disabling protection. Optional task hooks may fail independently without disabling an otherwise available idle path. Hook registration does not verify actual event delivery; check the target V2 host.
 
@@ -43,10 +45,3 @@ OpenCode V2 partial or transition contexts are ignored if required event/session
 - V1's system transformation is experimental. V2 `prompt` and `context` have different boundaries; verify delivery on the actual host.
 - Synthetic continuation is bounded rather than unconditionally repeating until the model says the task is complete. This prevents a plugin-induced infinite loop; the user may request additional iterations when the budget is exhausted.
 - Existing conversation-style rules retain their configurable severities. To prioritize task completion without blocking on stylistic phrases, set `discipline/no-apology`, `discipline/no-evasion`, or `quality/no-shortcuts` to `warn` explicitly.
-
-## Potential extensions
-
-- Rich, user-confirmed structured task scopes for complex multi-part requirements; the current optional first-line directive supports a small typed contract, not a full per-file scope manifest.
-- Richer per-file coverage and before/after diff evidence for a genuinely verifiable complete audit.
-- Expand the already implemented, opt-in pre-tool checks beyond recognized shell tool names and command fields, with explicit host capability tests, narrowly scoped authorization where appropriate, and careful false-positive controls.
-- Validate the currently deployed package on a real V1 host and the V2 adapter and sidebar on a real V2 host, including lost events, preflight rejection and session interruption.

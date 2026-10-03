@@ -1,6 +1,5 @@
 {
   "enabled": true,
-  "debug": true,
   "rules": {
     "discipline/no-evasion": "error",
     "quality/no-shortcuts": "error",
