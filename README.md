@@ -173,13 +173,13 @@ CI blocks on any production dependency advisory with `npm audit --omit=dev`. It 
 
 Guardian checks the npm registry for a newer **stable** release in the background and shows a five-second OpenCode TUI notice if one exists. The check is enabled by default on compatible V1 clients (`session.created`) and V2 CLI TUI hosts (`ui.toast.show`), caches the registry result for 24 hours in the private Guardian state directory, and times out after three seconds. No notice is shown when the UI API is unavailable, the network is down, Guardian is disabled, or a local development checkout is loaded. No package is installed or upgraded automatically. Set `"updateNotice": { "enabled": false }` in `opencode-guardian.json` to opt out. V2 live-host behavior remains to be verified.
 
-### Guardian event log, status command, and optional V2 sidebar
+### Guardian event log, status command, and optional V1/V2 sidebar
 
 Guardian records **minimal redacted events** in `~/.local/state/opencode-guardian/events.jsonl` (or `OPENCODE_GUARDIAN_STATE_DIR/events.jsonl`). The directory is created with mode `0700` and the file with `0600` on POSIX. Events include plugin startup, inspected **shell** calls (when strict preflight is enabled), pre-execution blocks, post-turn warnings/remediations, and inspection errors. No raw commands, prompts, tool arguments, credentials, or original session IDs are written; session IDs are short SHA-256 fingerprints. Logging is best-effort and does not block tool execution if its directory is unwritable; pre-existing shared state directories and symlink log files are rejected.
 
 Run `opencode-guardian-status` with the installed package, or `node scripts/guardian-status.mjs` from the repository. The command shows counters and the last-start preflight state. Counters are calculated from the newest **2 MiB** of the log; when older entries are omitted, the command and sidebar explicitly say so. The displayed preflight state reflects the **last recorded successful plugin start**, not proof that a plugin process is currently alive. Only shell calls checked by strict preflight count as "inspected"; a zero does not mean that no other tools ran.
 
-On compatible **OpenCode V2** CLI builds, the package also exports `./tui`. The sidebar appears if the CLI discovers and loads that TUI entrypoint; this has not yet been visually verified on a live V2 host. It **appends** a compact Guardian section to `sidebar.content`; it does not replace built-in widgets or other plugins' sections. The TUI reads the **local** log, so a CLI connected to a server on a different machine cannot display that server's counters. OpenCode V1 continues to use the server plugin and status command; there is no V1 sidebar API assumed here. Native TUI rendering requires the host's `@opentui/core`, `@opentui/solid` and `solid-js` runtime.
+The package exports a dedicated `./tui` entrypoint for both **OpenCode 1** (`tui(api)` with additive `api.slots.register({ slots: { sidebar_content } })`) and **OpenCode 2** (`setup(context)` with `context.ui.slot({ append: "sidebar.content" })`). The plugin must be discovered through the host's TUI plugin configuration; installing the server plugin alone does not automatically enable the TUI extension. It adds a compact Guardian section without replacing other sidebar widgets. The TUI reads the **local** event log, so a CLI connected to a remote server cannot display that server's counters. V1/V2 slot registration is mock-tested; live sidebar rendering on the specific target hosts remains to be verified. Native rendering requires `@opentui/core`, `@opentui/solid` and `solid-js`.
 
 ### Optional pre-execution protection (strict opt-in)
 
@@ -293,7 +293,7 @@ CI runs the full verification sequence on Node **22** and **24**. The tests cove
 
 ## Project layout and documentation
 
-- [`src/`](src/): OpenCode adapters (`index.ts`), rules, evidence and task policy, opt-in preflight, telemetry and V2 TUI.
+- [`src/`](src/): OpenCode adapters (`index.ts`), rules, evidence and task policy, opt-in preflight, telemetry and dual-mode V1/V2 TUI.
 - [`tests/`](tests/) and [`sandbox/`](sandbox/): automated regressions and isolated host scenarios.
 - [`dist/`](dist/): prebuilt package; [`scripts/`](scripts/): status command and development-audit check.
 - [`docs/task-contract-v1-v2.md`](docs/task-contract-v1-v2.md): V1/V2 hook design and task contracts.

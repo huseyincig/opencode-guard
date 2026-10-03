@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs } from "@opentui/solid/jsx-runtime";
-/** OpenCode V2 CLI-only status surface. V1 loads the server without this entry. */
+/** Dedicated TUI entrypoint: OpenCode 1 (tui / sidebar_content) and 2 (setup / sidebar.content). */
 import { Plugin } from "@opencode/plugin/tui";
 import { createSignal, onCleanup } from "solid-js";
 import { readGuardianStatus } from "./telemetry.js";
@@ -11,7 +11,7 @@ function GuardianSidebar() {
     onCleanup(() => clearInterval(timer));
     return (_jsxs("box", { flexDirection: "column", gap: 0, children: [_jsx("text", { children: _jsx("b", { children: "Guardian" }) }), _jsx("text", { children: () => `Preflight (last start): ${status().preflight}` }), _jsx("text", { children: () => `Checked: ${status().inspected}  Blocked: ${status().blocked}` }), _jsx("text", { children: () => `Warnings: ${status().warnings}  Remediations: ${status().remediations}` }), _jsx("text", { children: () => status().truncated ? "Recent log window only" : "" })] }));
 }
-export default Plugin.define({
+const v2Plugin = Plugin.define({
     id: "opencode-guardian.tui",
     setup(context) {
         const config = loadConfig(context.location?.directory ?? process.cwd());
@@ -27,3 +27,21 @@ export default Plugin.define({
         });
     },
 });
+
+export default {
+    ...v2Plugin,
+    async tui(api) {
+        const config = loadConfig(api.state?.path?.directory ?? process.cwd());
+        if (config.enabled === false)
+            return;
+        // V1 owns the registration lifecycle. This entrypoint exports no server hook.
+        api.slots.register({
+            order: 600,
+            slots: {
+                sidebar_content() {
+                    return _jsx(GuardianSidebar, {});
+                },
+            },
+        });
+    },
+};
