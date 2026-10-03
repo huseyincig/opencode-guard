@@ -72,6 +72,22 @@ test("V1 TUI honors the same disabled Guardian configuration", async (t) => {
   assert.equal(called, false);
 });
 
+test("V2 TUI honors disabled Guardian configuration", async (t) => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guardian-v2-tui-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, "opencode-guardian.json"), '{"enabled":false}');
+  let called = false;
+  const result = TuiPlugin.setup({
+    location: { directory: dir },
+    ui: { slot() { called = true; return () => {}; } },
+  });
+  assert.equal(called, false);
+  assert.equal(result, undefined);
+});
+
 
 test("TUI build uses Solid Universal and shares the OpenCode host runtime", async () => {
   const fs = await import("node:fs");
@@ -107,7 +123,9 @@ test("Guardian sidebar is compact by default and contains expandable details", a
   assert.match(source, /status\(\)\.warnings/);
   assert.match(source, /label="Preflight"/);
   assert.match(source, /StatRow/);
-  assert.match(source, /\(↑\)/);
+  assert.match(source, /totalBlocked/);
+  assert.match(source, /○ Idle/);
+  assert.match(source, /disposed = true/);
   assert.match(runtime, /opentui:runtime-module:solid-js/);
   assert.match(runtime, /onMouseDown/);
   assert.match(runtime, /\(↑\)/);

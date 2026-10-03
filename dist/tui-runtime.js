@@ -48,13 +48,17 @@ function GuardianSidebar(props) {
   const [open, setOpen] = createSignal(false);
   const [status, setStatus] = createSignal(readGuardianStatus(props.directory));
   const timer = setInterval(() => setStatus(readGuardianStatus(props.directory)), 2500);
-  onCleanup(() => clearInterval(timer));
+  let disposed = false;
+  onCleanup(() => {
+    clearInterval(timer);
+    disposed = true;
+  });
   const [hasUpdate, setHasUpdate] = createSignal(false);
   const [latestVersion, setLatestVersion] = createSignal(undefined);
   checkGuardianUpdate({
     allowDevelopment: true
   }).then(info => {
-    if (info) {
+    if (!disposed && info) {
       setHasUpdate(true);
       setLatestVersion(info.latest);
     }
@@ -75,14 +79,19 @@ function GuardianSidebar(props) {
     if (pf === "unavailable") return warningColor();
     return props.colors.muted;
   };
+  const totalBlocked = () => status().blocked + status().remediations;
   const statusLabel = () => {
-    if (status().blocked > 0) return `● ${status().blocked} blocked`;
+    if (totalBlocked() > 0) return `● ${totalBlocked()} blocked`;
     if (status().warnings > 0) return `● ${status().warnings} warn`;
+    if (status().errors > 0) return `● ${status().errors} err`;
+    if (!status().lastEvent && status().preflight === "unknown") return "○ Idle";
     return "● Active";
   };
   const statusColor = () => {
-    if (status().blocked > 0) return errorColor();
+    if (totalBlocked() > 0) return errorColor();
     if (status().warnings > 0) return warningColor();
+    if (status().errors > 0) return errorColor();
+    if (!status().lastEvent && status().preflight === "unknown") return props.colors.muted;
     return successColor();
   };
   return (() => {
@@ -195,10 +204,10 @@ function GuardianSidebar(props) {
         }), _$createComponent(StatRow, {
           label: "Blocked",
           get value() {
-            return status().blocked;
+            return totalBlocked();
           },
           get valueColor() {
-            return _$memo(() => status().blocked > 0)() ? errorColor() : props.colors.muted;
+            return _$memo(() => totalBlocked() > 0)() ? errorColor() : props.colors.muted;
           },
           get muted() {
             return props.colors.muted;
@@ -327,7 +336,8 @@ const v2Plugin = {
   setup(context) {
     const directory = context.location?.directory ?? process.cwd();
     const config = loadConfig(directory);
-    if (config.enabled !== false && config.updateNotice?.enabled !== false && typeof context.ui.toast?.show === "function") {
+    if (config.enabled === false) return;
+    if (config.updateNotice?.enabled !== false && typeof context.ui.toast?.show === "function") {
       void announceGuardianUpdate((current, latest) => context.ui.toast.show({
         title: "OpenCode Guardian — New version",
         message: `v${current} → v${latest} (update manually)`,

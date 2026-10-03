@@ -4,8 +4,9 @@ import { isDestructiveCommand, isOpaqueShellExecution, isSimpleFileRemoval } fro
  * by OpenCode's own permissions and the existing post-turn Guardian rules.
  */
 const SHELL_TOOLS = new Set([
-    "bash", "shell", "terminal", "exec", "shell_exec",
-    "execute_command", "command", "run_command",
+    "bash", "sh", "zsh", "shell", "terminal", "exec", "shell_exec",
+    "execute_command", "command", "run_command", "run_shell_command",
+    "powershell", "pwsh", "cmd",
 ]);
 export function isShellExecutionTool(tool) {
     const last = tool.toLowerCase().split(/[.:/]/).at(-1) ?? "";

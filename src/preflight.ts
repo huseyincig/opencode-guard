@@ -7,8 +7,9 @@ export type PreflightFinding = "destructive-command" | "opaque-shell-execution" 
  * by OpenCode's own permissions and the existing post-turn Guardian rules.
  */
 const SHELL_TOOLS = new Set([
-  "bash", "shell", "terminal", "exec", "shell_exec",
-  "execute_command", "command", "run_command",
+  "bash", "sh", "zsh", "shell", "terminal", "exec", "shell_exec",
+  "execute_command", "command", "run_command", "run_shell_command",
+  "powershell", "pwsh", "cmd",
 ]);
 
 export function isShellExecutionTool(tool: string): boolean {

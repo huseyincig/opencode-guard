@@ -48,6 +48,12 @@ test("preflight passes legitimate commands, non-shell tools and supported aliase
   assert.equal(evaluatePreflight("mcp.tool.bash", { cmd: "git clean -fd" }), "destructive-command");
   assert.equal(evaluatePreflight("bash", { command: "rm fixture.tmp" }), "destructive-command");
   assert.equal(evaluatePreflight("execute_command", { script: "find src -delete" }), "destructive-command");
+  assert.equal(evaluatePreflight("run_shell_command", { command: "rm -rf sandbox" }), "destructive-command");
+  assert.equal(evaluatePreflight("sh", { command: "rm -rf sandbox" }), "destructive-command");
+  assert.equal(evaluatePreflight("zsh", { command: "rm -rf sandbox" }), "destructive-command");
+  assert.equal(evaluatePreflight("powershell", { command: "rm -rf sandbox" }), "destructive-command");
+  assert.equal(evaluatePreflight("pwsh", { command: "rm -rf sandbox" }), "destructive-command");
+  assert.equal(evaluatePreflight("cmd", { command: "rm -rf sandbox" }), "destructive-command");
   assert.equal(evaluatePreflight("bash", { command: "npm test", cmd: "git clean -fd" }), "destructive-command");
   assert.equal(evaluatePreflight("bash", { command: "npm test", script: "npm run build" }), "uninspectable-shell-input");
 });
