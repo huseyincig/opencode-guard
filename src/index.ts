@@ -4,7 +4,8 @@ import { GuardEngine, loadConfig } from "./engine.js";
 import type { MessagePart, SessionMessage } from "./types.js";
 import { extractTaskContract, taskGuidance } from "./task-contract.js";
 import type { TaskContract } from "./task-contract.js";
-import { enforcePreflight } from "./preflight.js";
+import { evaluatePreflight, GuardianPreflightError, isShellExecutionTool } from "./preflight.js";
+import { recordGuardianEvent, sessionFingerprint } from "./telemetry.js";
 
 export * from "./types.js";
 export * from "./engine.js";
@@ -29,6 +30,7 @@ export * from "./rules/task-completion.js";
 export * from "./rules/instruction-fidelity.js";
 export * from "./prose.js";
 export * from "./preflight.js";
+export * from "./telemetry.js";
 
 function stringifyV2ToolContent(content: unknown): string {
   if (!Array.isArray(content)) return "";
@@ -166,13 +168,32 @@ async function handleSessionIdle(
   try {
     const messages = await fetchMessages();
     const result = await engine.inspect(sessionID, directory, messages);
+    const findings = result.results.filter((item) => item.findings.length > 0);
+    if (findings.length && !(result.decision === "block" && result.combinedRemediationPrompt)) {
+      recordGuardianEvent({ kind: "post-warning", session: sessionFingerprint(sessionID), rules: findings.map((item) => item.ruleId) });
+    }
 
     if (result.decision === "block" && result.combinedRemediationPrompt) {
       await sendPrompt(result.combinedRemediationPrompt);
+      recordGuardianEvent({ kind: "post-remediation", session: sessionFingerprint(sessionID), rules: findings.map((item) => item.ruleId) });
     }
   } catch (error) {
+    recordGuardianEvent({ kind: "inspection-error", session: sessionFingerprint(sessionID) });
     console.error("[opencode-guardian] Inspection error:", error);
   }
+}
+
+/** Records only recognized shell calls and a rule code, never raw commands. */
+function inspectPreflight(tool: string, args: unknown, sessionID?: string): void {
+  if (!isShellExecutionTool(tool)) return;
+  const finding = evaluatePreflight(tool, args);
+  recordGuardianEvent({
+    kind: finding ? "preflight-blocked" : "preflight-allowed",
+    session: sessionFingerprint(sessionID),
+    tool: tool.toLowerCase().split(/[.:/]/).at(-1),
+    ...(finding ? { rules: [finding] } : {}),
+  });
+  if (finding) throw new GuardianPreflightError(finding);
 }
 
 const server: OpenCodeV1ServerPlugin = async ({ client, directory }) => {
@@ -180,12 +201,14 @@ const server: OpenCodeV1ServerPlugin = async ({ client, directory }) => {
   const engine = new GuardEngine(config);
   const contracts = new Map<string, TaskContract>();
   let promptSequence = 0;
+  const strictPreflight = config.enabled !== false && config.preflight?.enabled === true;
+  recordGuardianEvent({ kind: "runtime-started", runtime: "v1", preflight: strictPreflight ? "active" : "disabled" });
 
   return {
-    ...(config.enabled !== false && config.preflight?.enabled === true ? {
+    ...(strictPreflight ? {
       "tool.execute.before": async (
-        input: { tool: string }, output: { args: unknown }
-      ) => enforcePreflight(input.tool, output.args),
+        input: { tool: string; sessionID?: string }, output: { args: unknown }
+      ) => inspectPreflight(input.tool, output.args, input.sessionID),
     } : {}),
     "chat.message": async (input, output) => {
       const text = output.parts
@@ -319,7 +342,7 @@ const setup: OpenCodeV2.Plugin["setup"] = async (
     }
     try {
       const registration = await context.tool.hook("execute.before", (event) => {
-        enforcePreflight(event.tool, event.input);
+        inspectPreflight(event.tool, event.input, event.sessionID);
       });
       if (!registration || typeof registration.dispose !== "function") {
         throw new Error("V2 tool hook did not return a valid registration.");
@@ -421,6 +444,7 @@ const setup: OpenCodeV2.Plugin["setup"] = async (
     }
   };
 
+  recordGuardianEvent({ kind: "runtime-started", runtime: "v2", preflight: strictPreflight ? "active" : "disabled" });
   void eventLoop();
 
   return async () => {

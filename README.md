@@ -167,6 +167,14 @@ To customize behavior, create `opencode-guardian.json` (or legacy `opencode-guar
 }
 ```
 
+### Guardian event log, status command, and optional V2 sidebar
+
+Guardian records **minimal redacted events** in `~/.local/state/opencode-guardian/events.jsonl` (or `OPENCODE_GUARDIAN_STATE_DIR/events.jsonl`). The directory is created with mode `0700` and the file with `0600` on POSIX. Events include plugin startup, inspected **shell** calls (when strict preflight is enabled), pre-execution blocks, post-turn warnings/remediations, and inspection errors. No raw commands, prompts, tool arguments, credentials, or original session IDs are written; session IDs are short SHA-256 fingerprints. Logging is best-effort and does not block tool execution if its directory is unwritable.
+
+Run `opencode-guardian-status` from a globally installed package, or `npx --package opencode-guardian opencode-guardian-status` to see counters and the last-start preflight state. Counters are calculated from the newest **2 MiB** of the log; when older entries are omitted, the command and sidebar explicitly say so. The displayed preflight state reflects the **last recorded successful plugin start**, not proof that a plugin process is currently alive. Only shell calls checked by strict preflight count as "inspected"; a zero does not mean that no other tools ran.
+
+On compatible **OpenCode V2** CLI builds, the package also exports `./tui`. The CLI loads the sidebar contribution automatically when it discovers this TUI entrypoint alongside the server plugin. It **appends** a compact Guardian section to `sidebar.content`; it does not replace built-in widgets or other plugins' sections. The TUI reads the **local** log, so a CLI connected to a server on a different machine cannot display that server's counters. OpenCode V1 continues to use the server plugin and status command; there is no V1 sidebar API assumed here. Native TUI rendering requires the host's `@opentui/core`, `@opentui/solid` and `solid-js` runtime.
+
 ### Optional pre-execution protection (strict opt-in)
 
 Set `"preflight": { "enabled": true }` in `opencode-guardian.json` to register a pre-execution shell-tool hook. This is **disabled by default**; the existing `session.idle` checks and `safety/destructive-operations: warn` behavior remain unchanged.

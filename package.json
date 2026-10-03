@@ -1,6 +1,6 @@
 {
   "name": "opencode-guardian",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Universal quality and safety guardian plugin for OpenCode AI agents (Dual-Mode: OpenCode v1 & v2)",
   "type": "module",
   "main": "./dist/index.js",
@@ -13,6 +13,10 @@
     "./server": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./tui": {
+      "import": "./dist/tui.js",
+      "types": "./dist/tui.d.ts"
     }
   },
   "files": [
@@ -21,7 +25,8 @@
     "README.md",
     "LICENSE",
     "index.js",
-    "server.js"
+    "server.js",
+    "scripts/guardian-status.mjs"
   ],
   "scripts": {
     "build": "tsc",
@@ -53,7 +58,29 @@
   "devDependencies": {
     "@opencode-ai/plugin": "^1.18.34",
     "@opencode/plugin": "^2.0.21",
+    "@opentui/core": "^0.5.14",
+    "@opentui/solid": "^0.5.14",
     "@types/node": "^22.0.0",
+    "solid-js": "^1.9.12",
     "typescript": "^5.8.0"
+  },
+  "bin": {
+    "opencode-guardian-status": "./scripts/guardian-status.mjs"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.5.14",
+    "@opentui/solid": ">=0.5.14",
+    "solid-js": ">=1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentui/core": {
+      "optional": true
+    },
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
   }
 }

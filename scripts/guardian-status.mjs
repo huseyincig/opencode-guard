@@ -1,0 +1,8 @@
+#!/usr/bin/env node
+import { readGuardianStatus, guardianEventPath } from "../dist/telemetry.js";
+const s = readGuardianStatus();
+console.log(`Guardian | preflight at last start: ${s.preflight}`);
+console.log(`Shell inspected: ${s.inspected} | blocked: ${s.blocked}`);
+console.log(`Post-turn warnings: ${s.warnings} | remediations: ${s.remediations} | errors: ${s.errors}`);
+if (s.truncated) console.log("Note: counters cover only the newest 2 MiB of the log.");
+console.log(`Event log: ${guardianEventPath()}`);
